@@ -1,37 +1,33 @@
-# 🤖 RPA Suite v5.4 — Andrés Díaz
+# 🤖 RPA Suite v6 — Andrés Díaz
 
-## 🆕 Novedades v5.4
+Una suite integral de Automatización Robótica de Procesos (RPA), Inteligencia Artificial (IA) y Business Intelligence (BI) orientada a sistemas ERP retail/mayoristas.
 
-### Status Bar fija abajo de la ventana
-Muestra en tiempo real (polling cada 3 segundos):
-- 🟢/🔴 PuTTY detectado o no
-- 🟢/⚫ Dashboard Streamlit activo o no  
-- 🟡 Robot corriendo / inactivo
-- 📂 Cantidad de archivos listos en input/
+## 🆕 Novedades v6
 
-### Popup de preview + confirmación antes de ejecutar
-Antes de tocar PuTTY, se abre un popup con:
-- Resumen completo del archivo (suma de control, total filas)
-- Mini tabla con las primeras 5 filas del Excel
-- Alertas de validación por color (✅ / ⚠ / ❌)
-- Botón **Confirmar y Ejecutar** / Cancelar
-- Si hay errores críticos (ej: cheques vencidos, margen negativo) el botón Confirmar queda deshabilitado
+### 🔒 Capa de Seguridad Militar (Nuevo)
+- **Cifrado `.env`**: Las credenciales se cifran con AES-256-GCM y PBKDF2 (100.000 iteraciones).
+- **Git Seguro**: Auto-configuración de Git que bloquea subidas accidentales de claves al repo.
+- **Auditoría**: Panel en la GUI para verificar integridad de variables y portapapeles con auto-limpieza.
 
-### Validaciones pre-ejecución automáticas
-| Robot | Qué valida |
-|---|---|
-| **Stock** | Suma de control de cantidades, SKUs duplicados, filas inválidas |
-| **Ajuste** | Delta neto (positivo+negativo), tipo de ingreso válido, duplicados |
-| **Precios** | Margen negativo (bloquea), margen bajo mínimo (advierte), cambios >20% vs anterior |
-| **Cheques** | Fechas vencidas (bloquea), montos atípicos, resumen por banco |
+### 🧠 Integración de IA y Machine Learning (Fase 1 & 2)
+- **Normalizador de Artículos (Gemini 1.5)**: Convierte descripciones "sucias" del ERP a formatos estándar con asignación automática de categorías.
+- **Detección de Anomalías (Isolation Forest)**: ML aplicado en stock/ventas para alertar riesgos de quiebre o sobre-stock.
+- **Resúmenes Ejecutivos IA (Groq)**: Lectura de dashboards de quiebre que emiten recomendaciones redactadas en lenguaje natural.
 
-### Notificaciones de escritorio Windows
-Cuando la ventana está minimizada, al terminar un lote aparece notificación nativa de Windows con el resumen. También al haber errores críticos.
+### 🛠️ Nuevos Robots y Backdoors Paramiko
+- **Backdoors Paramiko**: Módulos para ejecutar cambios en Precios, Stock y Ajustes de manera ultra rápida, por túneles SSH nativos, ignorando la GUI de PuTTY.
+- **Robot UXB**: Corrector inteligente de Unidades por Bulto.
+- **Alta Masiva de Artículos**: Robot que crea nuevos SKUs e interactúa con el menú del sistema legado.
 
-### Panel de Configuración desde la GUI
-Botón "Configuración" en el sidebar abre un editor del archivo `.env` directamente en la app. Guardá las credenciales sin abrir el Bloc de Notas.
+### 📊 Dashboards Streamlit Unificados & Compartidos
+- Portal consolidado con Quiebres de Stock, Pricing Intelligence, Conciliación Bancaria y Business Intelligence.
+- **Compartir vía Ngrok**: Botón de un solo clic para exponer un dashboard en Internet de forma segura y compartirlo por WhatsApp (incluye código QR).
 
----
+### ⚙️ Mejoras Core
+- **Watchdog con Visión Artificial**: Monitorea el progreso del robot. Si salta una ventana inesperada de Windows o PuTTY se congela, bloquea la ejecución para evitar desastres.
+- **Base de Datos SQLite (`rpa_suite.db`)**: Tracking del historial completo de lo inyectado en el sistema.
+- **Modo Programado (Scheduler)**: Para dejar tareas en background (Ej: que "Stock" corra a las 8:00 AM).
+- **Sistema de Checkpoint**: Guarda el estado ante una falla; permite hacer *dry-runs* sin impactar la DB.
 
 ## 📂 Estructura
 

@@ -1,0 +1,56 @@
+CARPETA DE ENTRADA — RPA Suite v5.3
+=====================================
+
+Colocá aquí los archivos Excel/CSV que los robots deben procesar.
+
+KEYWORDS POR ROBOT:
+─────────────────────────────────────────
+  Robot STOCK (Putty 3-6-1)   → el nombre debe contener: "carga"
+  Robot AJUSTE (3-6-2)        → el nombre debe contener: "nc"
+  Robot PRECIOS (3-4-2)       → el nombre debe contener: "precios"
+  Robot CHEQUES               → el nombre debe contener: "cheque"
+
+EJEMPLOS VÁLIDOS:
+─────────────────────────────────────────
+  ✅ carga_sucursal1.xlsx
+  ✅ carga marzo 2026.xlsx
+  ✅ CARGA COMPLETA.xlsx
+
+  ✅ NC ajuste semanal.xlsx
+  ✅ nc_2026-03-10.xlsx
+
+  ✅ precios trio.xlsx
+  ✅ PRECIOS MAYORISTAS.xlsx
+  ✅ lista de precios actualizada.xlsx
+
+  ✅ cheques semana 10.xlsx
+  ✅ CHEQUE cartera.xlsx
+
+EJEMPLOS INVÁLIDOS:
+─────────────────────────────────────────
+  ❌ stock_semana.xlsx       (falta la palabra "carga")
+  ❌ ajuste_diario.xlsx      (falta "nc")
+  ❌ lista_precios.xlsx      (falta "precios" — aunque es lista de precios)
+
+CARGA MASIVA (múltiples archivos):
+─────────────────────────────────────────
+  Podés tener VARIOS archivos mezclados en esta carpeta.
+  Al ejecutar un robot, solo tomará LOS SUYOS.
+
+  Ejemplo de carpeta con 3 robots listos:
+    carga_lunes.xlsx       → STOCK lo procesa
+    carga_martes.xlsx      → STOCK lo procesa
+    NC_semana.xlsx         → AJUSTE lo procesa
+    precios_trio.xlsx      → PRECIOS lo procesa
+
+  Al ejecutar STOCK: procesa carga_lunes + carga_martes
+  Al ejecutar AJUSTE: procesa NC_semana
+  Al ejecutar PRECIOS: procesa precios_trio
+
+NOTAS:
+─────────────────────────────────────────
+  - La búsqueda de keyword es case-insensitive (CARGA = carga = Carga)
+  - Si no hay archivos en esta carpeta, podés seleccionar uno manualmente
+    desde el botón "Seleccionar Archivo" en la GUI
+  - Los archivos procesados se mueven a /procesados/ automáticamente
+

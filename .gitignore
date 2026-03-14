@@ -1,14 +1,28 @@
-*.pyc
-__pycache__/
+# Configuración y Credenciales Sensibles (¡NUNCA SUBIR!)
 .env
-logs/
-procesados/
-input/
-*.log
-.DS_Store
-
 .env.enc
 .env.hash
 *.env
-pricing_data/
+
+# Entornos Virtuales y Cache Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Bases de Datos e Historiales
+rpa_suite.db
 scheduler_tasks.json
+articulos_cache.json
+
+# Logs, Reportes y Archivos de Trabajo
+logs/
+procesados/
+checkpoints/
+pricing_data/
+dashboards/reports/
+
+# Archivos Temporales de Exportación / Depuración
+DRY_RUN_*.xlsx
+diagnostico_ssh_*.txt
+debug_report_*.txt

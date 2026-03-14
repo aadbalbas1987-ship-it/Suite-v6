@@ -1,47 +1,32 @@
-# ============================================================
-# RPA Suite v5.4 — requirements.txt
-# Andres Diaz — 2026
-# ============================================================
-# Instalacion completa:
-#   pip install -r requirements.txt
-#
-# O usar el instalador con verificacion:
-#   instalar_suite.bat   (Windows, recomendado)
-# ============================================================
+# UI y Utilidades Core
+customtkinter==5.2.2
+pywebview==5.0.3
+python-dotenv==1.0.1
+pyperclip==1.8.2
 
-# ── CORE (todos los modulos) ─────────────────────────────────
-pandas>=2.0.0
-numpy>=1.26.0
-openpyxl>=3.1.0
-python-dotenv>=1.0.0
-paramiko>=3.4.0
-streamlit>=1.32.0
-plotly>=5.20.0
-reportlab>=4.1.0
-customtkinter>=5.2.0
-cryptography>=42.0.0
+# Manipulación de Datos
+pandas==2.2.1
+numpy==1.26.4
+openpyxl==3.1.2
+xlsxwriter==3.2.0
 
-# ── WINDOWS — Robots pyautogui + Watchdog ────────────────────
-pyautogui>=0.9.54
-pygetwindow>=0.0.9
-Pillow>=10.0.0
-pywin32>=308
-pyperclip>=1.8.0
+# Dashboards y Visualización
+streamlit==1.32.2
+plotly==5.20.0
+matplotlib==3.8.3
+seaborn==0.13.2
 
-# ── GEMINI IA ────────────────────────────────────────────────
-google-generativeai>=0.7.0
+# IA y Machine Learning
+google-generativeai==0.4.1
+scikit-learn==1.4.1.post1
 
-# ── NUEVAS EN v5.4 ───────────────────────────────────────────
-plyer>=2.1.0            # Notificaciones de escritorio Windows
-# win10toast>=0.9       # Alternativa a plyer (descomenta si plyer falla)
-pywebview>=4.0.0        # Dashboards en ventana nativa sin Chrome
-requests>=2.31.0        # Scraping ML / AFIP / APIs
-pytrends>=4.9.0         # Google Trends para market research
-groq>=0.5.0             # Validacion IA pre-ejecucion (Groq/Llama)
-selenium>=4.19.0        # Padron ARCA (CUIT) via navegador headless
-webdriver-manager>=4.0.0
+# Redes, Criptografía y SSH
+cryptography==42.0.5
+paramiko==3.4.0
+requests==2.31.0
 
-# ── OPCIONALES ───────────────────────────────────────────────
-pdfplumber>=0.11.0      # Extractor de PDFs
-# easyocr>=1.7.0        # Conciliador OCR (requiere PyTorch ~2GB)
-
+# Watchdog y Visión Computacional (Exclusivo Windows)
+pywin32==306
+pyautogui==0.9.54
+Pillow==10.2.0
+qrcode==7.4.2
