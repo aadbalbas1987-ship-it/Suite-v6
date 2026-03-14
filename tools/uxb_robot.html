@@ -1,0 +1,1022 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Robot UXB — Corrector Inteligente</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500;700&display=swap');
+
+  :root {
+    --bg: #0b0e14;
+    --surface: #13181f;
+    --surface2: #1c2330;
+    --border: #2a3344;
+    --accent: #00e5a0;
+    --accent2: #0077ff;
+    --warn: #ffb800;
+    --danger: #ff4444;
+    --text: #e8edf5;
+    --muted: #6b7a94;
+    --mono: 'Space Mono', monospace;
+    --sans: 'DM Sans', sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 16px 28px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+
+  .logo {
+    font-family: var(--mono);
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--accent);
+    letter-spacing: -0.5px;
+  }
+
+  .logo span { color: var(--muted); }
+
+  .header-status {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    font-size: 13px;
+    color: var(--muted);
+  }
+
+  .pill {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 4px 12px;
+    font-family: var(--mono);
+    font-size: 12px;
+  }
+
+  .pill.green { border-color: var(--accent); color: var(--accent); }
+  .pill.blue { border-color: var(--accent2); color: var(--accent2); }
+  .pill.warn { border-color: var(--warn); color: var(--warn); }
+
+  main {
+    display: grid;
+    grid-template-columns: 340px 1fr;
+    gap: 0;
+    flex: 1;
+    height: calc(100vh - 57px);
+  }
+
+  /* SIDEBAR */
+  aside {
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .aside-section {
+    padding: 20px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .aside-section h3 {
+    font-size: 11px;
+    font-family: var(--mono);
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 12px;
+  }
+
+  .upload-zone {
+    border: 2px dashed var(--border);
+    border-radius: 10px;
+    padding: 24px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    background: var(--bg);
+  }
+
+  .upload-zone:hover, .upload-zone.drag { border-color: var(--accent); background: rgba(0,229,160,0.04); }
+
+  .upload-zone .icon { font-size: 28px; margin-bottom: 8px; }
+  .upload-zone p { font-size: 13px; color: var(--muted); }
+  .upload-zone strong { color: var(--text); font-size: 14px; display: block; margin-bottom: 4px; }
+
+  #file-input { display: none; }
+
+  .config-row {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 4px;
+  }
+
+  label { font-size: 12px; color: var(--muted); display: block; margin-bottom: 4px; }
+
+  input[type=number], select {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 12px;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 14px;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+
+  input[type=number]:focus, select:focus { border-color: var(--accent); }
+
+  .btn {
+    padding: 10px 18px;
+    border-radius: 8px;
+    border: none;
+    font-family: var(--sans);
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.15s;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    width: 100%;
+  }
+
+  .btn-primary {
+    background: var(--accent);
+    color: #000;
+  }
+  .btn-primary:hover { filter: brightness(1.1); transform: translateY(-1px); }
+  .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+
+  .btn-secondary {
+    background: var(--surface2);
+    color: var(--text);
+    border: 1px solid var(--border);
+  }
+  .btn-secondary:hover { border-color: var(--accent2); }
+  .btn-secondary:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .btn-danger {
+    background: rgba(255,68,68,0.1);
+    color: var(--danger);
+    border: 1px solid rgba(255,68,68,0.3);
+  }
+  .btn-danger:hover { background: rgba(255,68,68,0.2); }
+
+  .progress-bar-wrap {
+    background: var(--bg);
+    border-radius: 4px;
+    height: 6px;
+    overflow: hidden;
+    margin-top: 8px;
+  }
+
+  .progress-bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent2), var(--accent));
+    border-radius: 4px;
+    transition: width 0.3s;
+    width: 0%;
+  }
+
+  .stats-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  .stat-box {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+  }
+
+  .stat-box .val {
+    font-family: var(--mono);
+    font-size: 20px;
+    font-weight: 700;
+    color: var(--accent);
+  }
+
+  .stat-box .lbl { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; margin-top: 2px; }
+
+  .log-box {
+    flex: 1;
+    overflow-y: auto;
+    padding: 14px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--muted);
+    line-height: 1.8;
+  }
+
+  .log-box .log-line { display: flex; gap: 8px; }
+  .log-box .log-line .ts { color: var(--border); flex-shrink: 0; }
+  .log-box .log-line.ok .msg { color: var(--accent); }
+  .log-box .log-line.err .msg { color: var(--danger); }
+  .log-box .log-line.info .msg { color: var(--accent2); }
+  .log-box .log-line.warn .msg { color: var(--warn); }
+
+  /* MAIN PANEL */
+  .panel {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .panel-toolbar {
+    padding: 14px 20px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  .panel-toolbar h2 {
+    font-size: 15px;
+    font-weight: 600;
+    margin-right: auto;
+  }
+
+  .search-input {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 7px 14px;
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 13px;
+    outline: none;
+    width: 220px;
+    transition: border-color 0.2s;
+  }
+  .search-input:focus { border-color: var(--accent2); }
+
+  .filter-tabs {
+    display: flex;
+    gap: 4px;
+  }
+
+  .tab {
+    padding: 6px 14px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--muted);
+    transition: all 0.15s;
+  }
+  .tab:hover { border-color: var(--muted); color: var(--text); }
+  .tab.active { background: var(--accent); color: #000; border-color: var(--accent); }
+
+  .table-wrap {
+    flex: 1;
+    overflow-y: auto;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+
+  thead {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: var(--surface2);
+  }
+
+  th {
+    padding: 10px 14px;
+    text-align: left;
+    font-size: 10px;
+    font-family: var(--mono);
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    color: var(--muted);
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+
+  td {
+    padding: 9px 14px;
+    border-bottom: 1px solid rgba(42,51,68,0.5);
+    vertical-align: middle;
+  }
+
+  tr:hover td { background: rgba(255,255,255,0.02); }
+
+  .td-code { font-family: var(--mono); font-size: 12px; color: var(--accent2); width: 70px; }
+  .td-desc { max-width: 280px; }
+  .td-desc .name { font-size: 13px; color: var(--text); }
+  .td-desc .prov { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .td-uxb-old { font-family: var(--mono); font-size: 13px; color: var(--muted); text-decoration: line-through; width: 70px; }
+  .td-uxb-new { width: 100px; }
+
+  .uxb-input {
+    width: 80px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 5px 8px;
+    color: var(--accent);
+    font-family: var(--mono);
+    font-size: 14px;
+    font-weight: 700;
+    outline: none;
+    text-align: center;
+    transition: border-color 0.2s;
+  }
+  .uxb-input:focus { border-color: var(--accent); }
+  .uxb-input.changed { border-color: var(--accent); background: rgba(0,229,160,0.05); }
+
+  .td-status { width: 110px; }
+
+  .status-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 600;
+    font-family: var(--mono);
+  }
+
+  .status-badge.pending { background: rgba(107,122,148,0.15); color: var(--muted); border: 1px solid var(--border); }
+  .status-badge.searching { background: rgba(0,119,255,0.1); color: var(--accent2); border: 1px solid rgba(0,119,255,0.3); animation: pulse 1.2s infinite; }
+  .status-badge.done { background: rgba(0,229,160,0.1); color: var(--accent); border: 1px solid rgba(0,229,160,0.3); }
+  .status-badge.error { background: rgba(255,68,68,0.1); color: var(--danger); border: 1px solid rgba(255,68,68,0.3); }
+  .status-badge.approved { background: rgba(0,229,160,0.2); color: var(--accent); border: 1px solid var(--accent); }
+  .status-badge.skipped { background: rgba(255,184,0,0.1); color: var(--warn); border: 1px solid rgba(255,184,0,0.3); }
+
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+
+  .td-conf { width: 70px; font-family: var(--mono); font-size: 12px; }
+  .conf-high { color: var(--accent); }
+  .conf-mid { color: var(--warn); }
+  .conf-low { color: var(--danger); }
+
+  .td-actions { width: 120px; }
+  .row-actions { display: flex; gap: 6px; }
+
+  .icon-btn {
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    transition: all 0.15s;
+  }
+  .icon-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .icon-btn.approve:hover { border-color: var(--accent); background: rgba(0,229,160,0.1); color: var(--accent); }
+  .icon-btn.skip:hover { border-color: var(--warn); background: rgba(255,184,0,0.1); color: var(--warn); }
+
+  .td-reason { max-width: 200px; font-size: 11px; color: var(--muted); font-style: italic; }
+
+  /* EXPORT SECTION */
+  .export-bar {
+    background: var(--surface);
+    border-top: 1px solid var(--border);
+    padding: 14px 20px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+
+  .export-bar .info { font-size: 13px; color: var(--muted); margin-right: auto; }
+  .export-bar .info strong { color: var(--accent); }
+
+  /* Empty state */
+  .empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+    gap: 12px;
+    color: var(--muted);
+  }
+  .empty-state .big-icon { font-size: 48px; opacity: 0.3; }
+  .empty-state p { font-size: 14px; }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--muted); }
+
+  .gap-8 { display: flex; flex-direction: column; gap: 8px; }
+
+  .inline-flex { display: flex; gap: 8px; }
+
+  .tooltip-reason {
+    max-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    cursor: help;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">ROBOT<span>/</span>UXB</div>
+  <div class="pill">v2.0</div>
+  <div class="header-status">
+    <span id="hdr-total" class="pill">Sin datos</span>
+    <span id="hdr-progress" class="pill blue" style="display:none"></span>
+    <span id="hdr-approved" class="pill green" style="display:none"></span>
+  </div>
+</header>
+
+
+<div id="api-key-banner" style="display:none;background:#FEF3C7;border:1px solid #F59E0B;
+  border-radius:8px;padding:12px 18px;margin:12px 16px;align-items:center;gap:12px;flex-wrap:wrap;">
+  <span style="font-weight:600;color:#92400E;">⚠️ API Key de Anthropic requerida</span>
+  <input id="api-key-input" type="password" placeholder="sk-ant-..." 
+    style="flex:1;min-width:280px;padding:6px 10px;border:1px solid #D1D5DB;border-radius:6px;font-size:13px;"
+    value="">
+  <button onclick="saveKey()" 
+    style="background:#D97706;color:white;border:none;padding:7px 16px;border-radius:6px;cursor:pointer;font-weight:600;">
+    Guardar
+  </button>
+  <span style="font-size:11px;color:#92400E;">Conseguila en <a href="https://console.anthropic.com" target="_blank">console.anthropic.com</a></span>
+</div>
+<main>
+  <!-- SIDEBAR -->
+  <aside>
+    <div class="aside-section">
+      <h3>📂 Archivo</h3>
+      <div class="upload-zone" id="drop-zone" onclick="document.getElementById('file-input').click()">
+        <div class="icon">📄</div>
+        <strong id="file-name">Arrastrá o hacé clic</strong>
+        <p>uxb_arreglo.txt (TSV)</p>
+      </div>
+      <input type="file" id="file-input" accept=".txt,.tsv,.csv">
+    </div>
+
+    <div class="aside-section">
+      <h3>⚙️ Configuración</h3>
+      <div class="config-row">
+        <div>
+          <label>Tamaño del lote</label>
+          <input type="number" id="batch-size" value="25" min="5" max="200">
+        </div>
+        <div>
+          <label>Lote a procesar (nro)</label>
+          <input type="number" id="batch-num" value="1" min="1">
+        </div>
+        <div class="inline-flex">
+          <button class="btn btn-primary" id="btn-search" disabled onclick="startSearch()">
+            🔍 Buscar UXB
+          </button>
+        </div>
+        <button class="btn btn-secondary" id="btn-stop" disabled onclick="stopSearch()" style="display:none">
+          ⏹ Detener
+        </button>
+      </div>
+    </div>
+
+    <div class="aside-section">
+      <h3>📊 Progreso</h3>
+      <div class="stats-grid">
+        <div class="stat-box"><div class="val" id="stat-total">0</div><div class="lbl">Total UXB=1</div></div>
+        <div class="stat-box"><div class="val" id="stat-processed">0</div><div class="lbl">Procesados</div></div>
+        <div class="stat-box"><div class="val" id="stat-approved" style="color:var(--accent)">0</div><div class="lbl">Aprobados</div></div>
+        <div class="stat-box"><div class="val" id="stat-pending" style="color:var(--warn)">0</div><div class="lbl">Pendientes</div></div>
+      </div>
+      <div class="progress-bar-wrap" style="margin-top:12px">
+        <div class="progress-bar-fill" id="progress-fill"></div>
+      </div>
+    </div>
+
+    <div class="aside-section">
+      <h3>💾 Exportar</h3>
+      <div class="gap-8">
+        <button class="btn btn-primary" onclick="exportApproved()" id="btn-export" disabled>
+          ⬇️ Exportar Aprobados (.txt)
+        </button>
+        <button class="btn btn-secondary" onclick="exportAll()" id="btn-export-all" disabled>
+          📋 Exportar Todo
+        </button>
+      </div>
+    </div>
+
+    <div class="log-box" id="log-box">
+      <div class="log-line info"><span class="ts">--:--:--</span><span class="msg">Robot UXB listo. Cargá el archivo para comenzar.</span></div>
+    </div>
+  </aside>
+
+  <!-- MAIN PANEL -->
+  <div class="panel">
+    <div class="panel-toolbar">
+      <h2>Productos con UXB = 1</h2>
+      <input class="search-input" type="text" placeholder="🔍 Buscar producto o código..." id="search-box" oninput="renderTable()">
+      <div class="filter-tabs">
+        <button class="tab active" onclick="setFilter('all', this)">Todos</button>
+        <button class="tab" onclick="setFilter('pending', this)">Pendientes</button>
+        <button class="tab" onclick="setFilter('done', this)">Procesados</button>
+        <button class="tab" onclick="setFilter('approved', this)">Aprobados</button>
+      </div>
+      <button class="btn btn-secondary" style="width:auto;padding:7px 14px" onclick="approveAll()">✅ Aprobar Todos</button>
+    </div>
+
+    <div class="table-wrap" id="table-wrap">
+      <div class="empty-state">
+        <div class="big-icon">🤖</div>
+        <p>Cargá el archivo TXT para ver los productos</p>
+      </div>
+    </div>
+
+    <div class="export-bar" id="export-bar">
+      <div class="info">
+        Aprobados para cargar en Putty: <strong id="export-count">0</strong>
+      </div>
+      <button class="btn btn-primary" style="width:auto;padding:9px 20px" onclick="exportApproved()" id="btn-export2" disabled>
+        ⬇️ Exportar para Putty Robot
+      </button>
+    </div>
+  </div>
+</main>
+
+<script>
+const ANTHROPIC_API = 'https://api.anthropic.com/v1/messages';
+
+// ─── API Key helpers ───────────────────────────────────────────
+function getApiKey() {
+  return localStorage.getItem('uxb_anthropic_key') || '';
+}
+function setApiKey(k) {
+  localStorage.setItem('uxb_anthropic_key', k);
+}
+function checkApiKey() {
+  const k = getApiKey();
+  const banner = document.getElementById('api-key-banner');
+  if (!k) {
+    banner.style.display = 'flex';
+  } else {
+    banner.style.display = 'none';
+  }
+  return k;
+}
+let allProducts = [];      // todos del archivo
+let uxbProducts = [];      // solo los UXB=1
+let currentFilter = 'all';
+let isSearching = false;
+let shouldStop = false;
+
+// ── PARSE TXT ──
+function parseTxt(text) {
+  const lines = text.split(/\r?\n/).filter(l => l.trim());
+  return lines.map(line => {
+    const cols = line.split('\t');
+    return {
+      code: (cols[0] || '').trim(),
+      desc: (cols[1] || '').trim(),
+      uxb: parseInt((cols[2] || '1').trim(), 10),
+      price: (cols[3] || '').trim(),
+      prov: (cols[4] || '').trim(),
+      uxbNew: null,
+      confidence: null,
+      reason: '',
+      status: 'pending'  // pending | searching | done | error | approved | skipped
+    };
+  }).filter(p => p.code && p.desc);
+}
+
+// ── FILE LOAD ──
+document.getElementById('file-input').addEventListener('change', e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  loadFile(file);
+});
+
+const dz = document.getElementById('drop-zone');
+dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('drag'); });
+dz.addEventListener('dragleave', () => dz.classList.remove('drag'));
+dz.addEventListener('drop', e => {
+  e.preventDefault();
+  dz.classList.remove('drag');
+  const file = e.dataTransfer.files[0];
+  if (file) loadFile(file);
+});
+
+function loadFile(file) {
+  const reader = new FileReader();
+  reader.onload = ev => {
+    allProducts = parseTxt(ev.target.result);
+    uxbProducts = allProducts.filter(p => p.uxb === 1).map(p => ({...p}));
+    document.getElementById('file-name').textContent = file.name;
+    updateStats();
+    updateHeaderStats();
+    renderTable();
+    document.getElementById('btn-search').disabled = false;
+    document.getElementById('btn-export').disabled = false;
+    document.getElementById('btn-export-all').disabled = false;
+    document.getElementById('btn-export2').disabled = false;
+    log(`Archivo cargado: ${allProducts.length} productos, ${uxbProducts.length} con UXB=1`, 'info');
+    updateBatchInfo();
+  };
+  reader.readAsText(file, 'UTF-8');
+}
+
+function updateBatchInfo() {
+  const total = uxbProducts.length;
+  const batchSize = parseInt(document.getElementById('batch-size').value) || 25;
+  const totalBatches = Math.ceil(total / batchSize);
+  document.getElementById('hdr-total').textContent = `${uxbProducts.length} productos | ${totalBatches} lotes de ${batchSize}`;
+}
+
+document.getElementById('batch-size').addEventListener('input', updateBatchInfo);
+
+// ── SEARCH ──
+async function startSearch() {
+  const batchSize = parseInt(document.getElementById('batch-size').value) || 25;
+  const batchNum = parseInt(document.getElementById('batch-num').value) || 1;
+  const start = (batchNum - 1) * batchSize;
+  const end = Math.min(start + batchSize, uxbProducts.length);
+
+  if (start >= uxbProducts.length) {
+    alert(`El lote ${batchNum} no existe. Máximo lote: ${Math.ceil(uxbProducts.length / batchSize)}`);
+    return;
+  }
+
+  isSearching = true;
+  shouldStop = false;
+  document.getElementById('btn-search').disabled = true;
+  document.getElementById('btn-stop').style.display = 'flex';
+  document.getElementById('btn-stop').disabled = false;
+
+  log(`Iniciando lote ${batchNum}: productos ${start+1} a ${end}`, 'info');
+
+  const batch = uxbProducts.slice(start, end);
+
+  // Reset status for this batch
+  batch.forEach(p => {
+    if (p.status === 'pending' || p.status === 'error') {
+      p.status = 'searching';
+    }
+  });
+  renderTable();
+
+  for (let i = 0; i < batch.length; i++) {
+    if (shouldStop) {
+      log('Búsqueda detenida por el usuario', 'warn');
+      break;
+    }
+    const prod = batch[i];
+    if (prod.status === 'approved' || prod.status === 'done') continue;
+
+    prod.status = 'searching';
+    renderTable();
+    log(`[${start+i+1}/${uxbProducts.length}] Buscando: ${prod.desc.substring(0,35)}...`);
+
+    try {
+      const result = await searchUXB(prod);
+      prod.uxbNew = result.uxb;
+      prod.confidence = result.confidence;
+      prod.reason = result.reason;
+      prod.status = 'done';
+      log(`✓ ${prod.desc.substring(0,30)} → UXB: ${result.uxb} (${result.confidence}%)`, 'ok');
+    } catch(err) {
+      prod.status = 'error';
+      prod.reason = err.message;
+      log(`✗ Error en ${prod.desc.substring(0,25)}: ${err.message}`, 'err');
+    }
+
+    updateStats();
+    renderTable();
+    await sleep(300);
+  }
+
+  isSearching = false;
+  document.getElementById('btn-search').disabled = false;
+  document.getElementById('btn-stop').style.display = 'none';
+  log(`Lote ${batchNum} finalizado.`, 'info');
+  updateStats();
+}
+
+function stopSearch() {
+  shouldStop = true;
+  document.getElementById('btn-stop').disabled = true;
+}
+
+async function searchUXB(prod) {
+  const prompt = `Sos un experto en gestión de inventario y logística de supermercados argentinos.
+
+Tu tarea es determinar el UXB correcto (unidades por bulto / caja de venta) para el siguiente producto.
+
+PRODUCTO:
+- Código: ${prod.code}
+- Descripción: "${prod.desc}"
+- Precio actual: $${prod.price}
+- Proveedor: ${prod.prov}
+
+El UXB actual está marcado como "1" lo cual es casi siempre incorrecto para productos masivos.
+El UXB es la cantidad de unidades que vienen en la presentación mayorista/caja de compra.
+
+Ejemplos de referencia:
+- Galletitas 200g → 12 unidades por caja
+- Papas fritas 63g → 20-24 por display, pero si dice "X63Grs" podría ser display individual
+- Vinos 750ml → 6 o 12 por caja
+- Jugos 200ml → 18-24 por caja
+- Yogures individuales → 8-12 por caja
+- Escobillones → según descripción (X12, X24)
+- Chocolates chicos → 12-24 por caja
+- Limpiadores grandes (900ml) → 6-12 por caja
+
+IMPORTANTE: Analizá el nombre del producto con mucho cuidado. Si el nombre ya incluye "X12", "X6", "18X200Ml", etc., ese número ES el UXB.
+
+Respondé SOLO en este formato JSON (sin texto extra, sin markdown):
+{"uxb": NUMERO, "confidence": NUMERO_0_a_100, "reason": "explicacion breve en español"}`;
+
+  const res = await fetch(ANTHROPIC_API, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': getApiKey(),
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true',
+    },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 1000,
+      tools: [{ type: 'web_search_20250305', name: 'web_search' }],
+      messages: [{ role: 'user', content: prompt }]
+    })
+  });
+
+  if (!res.ok) {
+    const err = await res.json();
+    throw new Error(err.error?.message || `HTTP ${res.status}`);
+  }
+
+  const data = await res.json();
+
+  // Extract text from content blocks
+  let text = '';
+  for (const block of data.content) {
+    if (block.type === 'text') text += block.text;
+  }
+
+  // Parse JSON from response
+  const jsonMatch = text.match(/\{[\s\S]*?\}/);
+  if (!jsonMatch) throw new Error('Respuesta inválida de la IA');
+
+  const parsed = JSON.parse(jsonMatch[0]);
+  if (!parsed.uxb || typeof parsed.uxb !== 'number') throw new Error('UXB no válido en respuesta');
+
+  return { uxb: parsed.uxb, confidence: parsed.confidence || 70, reason: parsed.reason || '' };
+}
+
+// ── RENDER TABLE ──
+function renderTable() {
+  const wrap = document.getElementById('table-wrap');
+  const search = document.getElementById('search-box').value.toLowerCase();
+
+  let data = uxbProducts.filter(p => {
+    const matchFilter =
+      currentFilter === 'all' ||
+      (currentFilter === 'pending' && (p.status === 'pending' || p.status === 'searching')) ||
+      (currentFilter === 'done' && (p.status === 'done' || p.status === 'error')) ||
+      (currentFilter === 'approved' && p.status === 'approved');
+
+    const matchSearch = !search ||
+      p.desc.toLowerCase().includes(search) ||
+      p.code.includes(search) ||
+      (p.prov || '').toLowerCase().includes(search);
+
+    return matchFilter && matchSearch;
+  });
+
+  if (data.length === 0) {
+    wrap.innerHTML = `<div class="empty-state"><div class="big-icon">🔍</div><p>No hay productos con estos filtros</p></div>`;
+    return;
+  }
+
+  const rows = data.map(p => {
+    const confClass = p.confidence >= 85 ? 'conf-high' : p.confidence >= 60 ? 'conf-mid' : 'conf-low';
+    const statusHtml = statusBadge(p.status);
+
+    return `<tr>
+      <td class="td-code">${p.code}</td>
+      <td class="td-desc">
+        <div class="name">${escHtml(p.desc)}</div>
+        <div class="prov">${escHtml(p.prov)}</div>
+      </td>
+      <td class="td-uxb-old">1</td>
+      <td class="td-uxb-new">
+        <input class="uxb-input ${p.uxbNew && p.uxbNew !== 1 ? 'changed' : ''}"
+          type="number" min="1" max="9999"
+          value="${p.uxbNew || ''}"
+          placeholder="—"
+          onchange="updateUxb('${p.code}', this.value)"
+          ${p.status === 'searching' ? 'disabled' : ''}>
+      </td>
+      <td class="td-conf">
+        ${p.confidence != null ? `<span class="${confClass}">${p.confidence}%</span>` : '—'}
+      </td>
+      <td class="td-status">${statusHtml}</td>
+      <td class="td-reason">
+        <span class="tooltip-reason" title="${escHtml(p.reason)}">${escHtml(p.reason.substring(0,40))}${p.reason.length > 40 ? '...' : ''}</span>
+      </td>
+      <td class="td-actions">
+        <div class="row-actions">
+          <button class="icon-btn approve" title="Aprobar" onclick="approveRow('${p.code}')" ${p.status === 'searching' ? 'disabled' : ''}>✓</button>
+          <button class="icon-btn skip" title="Saltear" onclick="skipRow('${p.code}')" ${p.status === 'searching' ? 'disabled' : ''}>—</button>
+        </div>
+      </td>
+    </tr>`;
+  }).join('');
+
+  wrap.innerHTML = `<table>
+    <thead><tr>
+      <th>Código</th><th>Descripción</th><th>UXB Old</th><th>UXB Nuevo</th>
+      <th>Conf.</th><th>Estado</th><th>Razón IA</th><th>Acción</th>
+    </tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+}
+
+function statusBadge(status) {
+  const map = {
+    pending: ['○', 'pending', 'Pendiente'],
+    searching: ['◌', 'searching', 'Buscando'],
+    done: ['◉', 'done', 'Listo'],
+    error: ['✗', 'error', 'Error'],
+    approved: ['✓', 'approved', 'Aprobado'],
+    skipped: ['→', 'skipped', 'Salteado'],
+  };
+  const [icon, cls, label] = map[status] || ['?', 'pending', '?'];
+  return `<span class="status-badge ${cls}">${icon} ${label}</span>`;
+}
+
+function escHtml(str) {
+  return (str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ── ACTIONS ──
+function updateUxb(code, val) {
+  const p = uxbProducts.find(x => x.code === code);
+  if (p) { p.uxbNew = parseInt(val, 10) || null; }
+}
+
+function approveRow(code) {
+  const p = uxbProducts.find(x => x.code === code);
+  if (p && p.uxbNew && p.uxbNew > 1) {
+    p.status = 'approved';
+    updateStats();
+    renderTable();
+  } else {
+    alert('Completá el UXB nuevo antes de aprobar.');
+  }
+}
+
+function skipRow(code) {
+  const p = uxbProducts.find(x => x.code === code);
+  if (p) {
+    p.status = 'skipped';
+    updateStats();
+    renderTable();
+  }
+}
+
+function approveAll() {
+  uxbProducts.forEach(p => {
+    if (p.status === 'done' && p.uxbNew && p.uxbNew > 1) {
+      p.status = 'approved';
+    }
+  });
+  updateStats();
+  renderTable();
+}
+
+function setFilter(f, btn) {
+  currentFilter = f;
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  btn.classList.add('active');
+  renderTable();
+}
+
+// ── STATS ──
+function updateStats() {
+  const total = uxbProducts.length;
+  const processed = uxbProducts.filter(p => ['done','error','approved','skipped'].includes(p.status)).length;
+  const approved = uxbProducts.filter(p => p.status === 'approved').length;
+  const pending = uxbProducts.filter(p => p.status === 'pending' || p.status === 'searching').length;
+
+  document.getElementById('stat-total').textContent = total;
+  document.getElementById('stat-processed').textContent = processed;
+  document.getElementById('stat-approved').textContent = approved;
+  document.getElementById('stat-pending').textContent = pending;
+  document.getElementById('progress-fill').style.width = total ? `${(processed/total)*100}%` : '0%';
+  document.getElementById('export-count').textContent = approved;
+
+  updateHeaderStats();
+}
+
+function updateHeaderStats() {
+  const approved = uxbProducts.filter(p => p.status === 'approved').length;
+  const processed = uxbProducts.filter(p => ['done','error','approved','skipped'].includes(p.status)).length;
+
+  if (approved > 0) {
+    document.getElementById('hdr-approved').style.display = '';
+    document.getElementById('hdr-approved').textContent = `✓ ${approved} aprobados`;
+  }
+  if (processed > 0) {
+    document.getElementById('hdr-progress').style.display = '';
+    document.getElementById('hdr-progress').textContent = `${processed}/${uxbProducts.length} procesados`;
+  }
+}
+
+// ── EXPORT ──
+function exportApproved() {
+  const approved = uxbProducts.filter(p => p.status === 'approved' && p.uxbNew);
+  if (approved.length === 0) { alert('No hay productos aprobados para exportar.'); return; }
+
+  const lines = approved.map(p => `${p.code}\t${p.uxbNew}`).join('\n');
+  const header = `# Robot UXB - Exportación ${new Date().toLocaleString('es-AR')}\n# Formato: CODIGO<TAB>UXB_NUEVO\n# Total: ${approved.length} productos\n`;
+  downloadTxt(header + lines, `uxb_aprobados_${Date.now()}.txt`);
+  log(`Exportados ${approved.length} productos aprobados`, 'ok');
+}
+
+function exportAll() {
+  const lines = uxbProducts.map(p =>
+    `${p.code}\t${escHtml(p.desc)}\t1\t${p.uxbNew || ''}\t${p.confidence || ''}\t${p.status}\t${p.reason}`
+  ).join('\n');
+  const header = `# Robot UXB - Export completo ${new Date().toLocaleString('es-AR')}\n# Columnas: CODIGO | DESCRIPCION | UXB_VIEJO | UXB_NUEVO | CONFIANZA | ESTADO | RAZON\n`;
+  downloadTxt(header + lines, `uxb_completo_${Date.now()}.txt`);
+  log(`Exportado archivo completo con ${uxbProducts.length} productos`, 'ok');
+}
+
+function downloadTxt(content, filename) {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([content], { type: 'text/plain;charset=utf-8' }));
+  a.download = filename;
+  a.click();
+}
+
+// ── LOG ──
+function log(msg, type = '') {
+  const box = document.getElementById('log-box');
+  const ts = new Date().toLocaleTimeString('es-AR', { hour12: false });
+  const line = document.createElement('div');
+  line.className = `log-line ${type}`;
+  line.innerHTML = `<span class="ts">${ts}</span><span class="msg">${escHtml(msg)}</span>`;
+  box.appendChild(line);
+  box.scrollTop = box.scrollHeight;
+}
+
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+function saveKey() {
+  const k = document.getElementById('api-key-input').value.trim();
+  if (k) {
+    setApiKey(k);
+    checkApiKey();
+    alert('✅ API Key guardada');
+  }
+}
+</script>
+<script>window.addEventListener('DOMContentLoaded', checkApiKey);</script>
+</body>
+</html>

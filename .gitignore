@@ -1,0 +1,14 @@
+*.pyc
+__pycache__/
+.env
+logs/
+procesados/
+input/
+*.log
+.DS_Store
+
+.env.enc
+.env.hash
+*.env
+pricing_data/
+scheduler_tasks.json

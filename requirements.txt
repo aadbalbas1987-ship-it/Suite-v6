@@ -1,0 +1,47 @@
+# ============================================================
+# RPA Suite v5.4 — requirements.txt
+# Andres Diaz — 2026
+# ============================================================
+# Instalacion completa:
+#   pip install -r requirements.txt
+#
+# O usar el instalador con verificacion:
+#   instalar_suite.bat   (Windows, recomendado)
+# ============================================================
+
+# ── CORE (todos los modulos) ─────────────────────────────────
+pandas>=2.0.0
+numpy>=1.26.0
+openpyxl>=3.1.0
+python-dotenv>=1.0.0
+paramiko>=3.4.0
+streamlit>=1.32.0
+plotly>=5.20.0
+reportlab>=4.1.0
+customtkinter>=5.2.0
+cryptography>=42.0.0
+
+# ── WINDOWS — Robots pyautogui + Watchdog ────────────────────
+pyautogui>=0.9.54
+pygetwindow>=0.0.9
+Pillow>=10.0.0
+pywin32>=308
+pyperclip>=1.8.0
+
+# ── GEMINI IA ────────────────────────────────────────────────
+google-generativeai>=0.7.0
+
+# ── NUEVAS EN v5.4 ───────────────────────────────────────────
+plyer>=2.1.0            # Notificaciones de escritorio Windows
+# win10toast>=0.9       # Alternativa a plyer (descomenta si plyer falla)
+pywebview>=4.0.0        # Dashboards en ventana nativa sin Chrome
+requests>=2.31.0        # Scraping ML / AFIP / APIs
+pytrends>=4.9.0         # Google Trends para market research
+groq>=0.5.0             # Validacion IA pre-ejecucion (Groq/Llama)
+selenium>=4.19.0        # Padron ARCA (CUIT) via navegador headless
+webdriver-manager>=4.0.0
+
+# ── OPCIONALES ───────────────────────────────────────────────
+pdfplumber>=0.11.0      # Extractor de PDFs
+# easyocr>=1.7.0        # Conciliador OCR (requiere PyTorch ~2GB)
+

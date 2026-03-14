@@ -1,0 +1,624 @@
+"""
+tools/pricing_research.py — RPA Suite v5
+==========================================
+Módulo de Pricing Analysis y Market Research.
+
+Funciones:
+  - scrape_mercadolibre(query, max_items)  → lista de precios de ML
+  - analizar_precios(df_interno, resultados_ml) → comparación + alertas
+  - market_research(queries, log_func)    → tendencias + ranking + IA
+  - guardar_snapshot(resultados)          → historial para evolución temporal
+
+Dependencias: requests, bs4, pandas, anthropic (ya instalado)
+"""
+
+import json
+import time
+import re
+import hashlib
+from datetime import datetime, date
+from pathlib import Path
+from typing import Optional, Callable
+import sys
+
+try:
+    from pytrends.request import TrendReq as _TrendReq  # type: ignore[import-untyped]
+    PYTRENDS_OK = True
+except ImportError:
+    _TrendReq = None  # type: ignore[assignment]
+    PYTRENDS_OK = False
+
+# ── Path raíz ───────────────────────────────────────────────
+_ROOT = Path(__file__).parent.parent
+_PRICING_DIR = _ROOT / "pricing_data"
+_PRICING_DIR.mkdir(exist_ok=True)
+_SNAPSHOTS_FILE = _PRICING_DIR / "snapshots.json"
+_HISTORY_FILE   = _PRICING_DIR / "price_history.json"
+
+LogFunc = Optional[Callable[[str], None]]
+
+
+def _log(msg: str, log_func: LogFunc = None):
+    if log_func:
+        log_func(msg)
+    else:
+        print(msg)
+
+
+# ══════════════════════════════════════════════════════════════
+# SCRAPING — Mercado Libre Argentina
+# ══════════════════════════════════════════════════════════════
+
+def scrape_mercadolibre(
+    query: str,
+    max_items: int = 20,
+    log_func: LogFunc = None,
+) -> list[dict]:
+    """
+    Scrapea precios de Mercado Libre Argentina para una búsqueda.
+    Usa la API pública de ML (sin token requerido para búsquedas básicas).
+
+    Returns:
+        Lista de dicts con: titulo, precio, moneda, vendedor,
+                            condicion, url, fecha_scraping
+    """
+    try:
+        import requests
+    except ImportError:
+        _log("❌ requests no instalado. Ejecutá: pip install requests", log_func)
+        return []
+
+    _log(f"🔍 Buscando en MercadoLibre: '{query}'...", log_func)
+
+    url = "https://api.mercadolibre.com/sites/MLA/search"
+    params = {
+        "q": query,
+        "limit": min(max_items, 50),
+        "condition": "new",
+    }
+
+    headers = {
+        "User-Agent": "RPASuite/5.0",
+        "Accept": "application/json",
+    }
+
+    try:
+        resp = requests.get(url, params=params, headers=headers, timeout=15)
+        resp.raise_for_status()
+        data = resp.json()
+    except Exception as e:
+        _log(f"❌ Error conectando a MercadoLibre: {e}", log_func)
+        return []
+
+    resultados = []
+    items = data.get("results", [])
+    _log(f"  Encontrados: {len(items)} resultados", log_func)
+
+    for item in items:
+        try:
+            precio = item.get("price", 0)
+            if not precio:
+                continue
+
+            resultados.append({
+                "id_ml":        item.get("id", ""),
+                "titulo":       item.get("title", ""),
+                "precio":       float(precio),
+                "moneda":       item.get("currency_id", "ARS"),
+                "vendedor":     item.get("seller", {}).get("nickname", ""),
+                "condicion":    item.get("condition", ""),
+                "disponibles":  item.get("available_quantity", 0),
+                "vendidos":     item.get("sold_quantity", 0),
+                "url":          item.get("permalink", ""),
+                "thumbnail":    item.get("thumbnail", ""),
+                "fecha":        datetime.now().isoformat(),
+                "query":        query,
+            })
+        except Exception:
+            continue
+
+    _log(f"  ✅ {len(resultados)} precios obtenidos", log_func)
+    return resultados
+
+
+def scrape_multiple_queries(
+    queries: list[str],
+    max_por_query: int = 15,
+    log_func: LogFunc = None,
+) -> dict[str, list[dict]]:
+    """Scrapea múltiples queries con pausa entre requests."""
+    resultados = {}
+    for i, q in enumerate(queries, 1):
+        _log(f"  [{i}/{len(queries)}] {q}", log_func)
+        resultados[q] = scrape_mercadolibre(q, max_por_query, log_func)
+        if i < len(queries):
+            time.sleep(1.0)  # pausa cortés entre requests
+    return resultados
+
+
+# ══════════════════════════════════════════════════════════════
+# ANÁLISIS DE PRECIOS
+# ══════════════════════════════════════════════════════════════
+
+def analizar_precios(
+    df_interno,          # DataFrame con cols: articulo, precio_venta, costo (opcional)
+    resultados_ml: dict, # {query: [items_ml]}
+    margen_minimo: float = 0.15,
+    umbral_desactualizacion: float = 0.10,
+    log_func: LogFunc = None,
+) -> dict:
+    """
+    Compara precios internos con Mercado Libre y genera análisis completo.
+
+    Returns dict con:
+      - comparacion: DataFrame con precios internos vs ML
+      - alertas: lista de alertas (precios fuera de rango, etc.)
+      - ranking_margen: artículos por margen descendente
+      - estadisticas: resumen general
+    """
+    try:
+        import pandas as pd
+        import numpy as np
+    except ImportError:
+        _log("❌ pandas/numpy no disponibles", log_func)
+        return {}
+
+    _log("📊 Analizando precios...", log_func)
+
+    alertas = []
+    comparacion_rows = []
+
+    # Flatten de resultados ML → precio promedio por query
+    ml_stats = {}
+    for query, items in resultados_ml.items():
+        if not items:
+            continue
+        precios = [i["precio"] for i in items if i["precio"] > 0]
+        if precios:
+            ml_stats[query] = {
+                "precio_min":    min(precios),
+                "precio_max":    max(precios),
+                "precio_promedio": sum(precios) / len(precios),
+                "precio_mediana": sorted(precios)[len(precios) // 2],
+                "n_competidores": len(precios),
+                "items":         items,
+            }
+
+    # Análisis artículo por artículo
+    for _, row in df_interno.iterrows():
+        articulo = str(row.get("articulo", row.get("descripcion", "Sin nombre")))
+        precio_interno = float(row.get("precio_venta", row.get("precio", 0)) or 0)
+        costo = float(row.get("costo", 0) or 0)
+
+        if precio_interno <= 0:
+            continue
+
+        margen_pct = ((precio_interno - costo) / precio_interno) if costo > 0 else None
+
+        # Buscar match en ML por similitud del nombre
+        mejor_match = None
+        mejor_score = 0
+        for query, stats in ml_stats.items():
+            # Score simple: palabras en común
+            palabras_art = set(articulo.lower().split())
+            palabras_q   = set(query.lower().split())
+            comunes = palabras_art & palabras_q
+            score = len(comunes) / max(len(palabras_q), 1)
+            if score > mejor_score and score > 0.3:
+                mejor_score = score
+                mejor_match = (query, stats)
+
+        fila = {
+            "articulo":       articulo,
+            "precio_interno": precio_interno,
+            "costo":          costo,
+            "margen_pct":     round(margen_pct * 100, 1) if margen_pct is not None else None,
+        }
+
+        if mejor_match:
+            q, stats = mejor_match
+            precio_ml_med = stats["precio_mediana"]
+            diferencia_pct = (precio_interno - precio_ml_med) / precio_ml_med
+
+            fila.update({
+                "precio_ml_min":    round(stats["precio_min"], 2),
+                "precio_ml_max":    round(stats["precio_max"], 2),
+                "precio_ml_med":    round(precio_ml_med, 2),
+                "n_competidores":   stats["n_competidores"],
+                "diferencia_pct":   round(diferencia_pct * 100, 1),
+                "match_query":      q,
+            })
+
+            # ── Alertas ──────────────────────────────────────
+            if diferencia_pct > umbral_desactualizacion:
+                alertas.append({
+                    "tipo":     "PRECIO_ALTO",
+                    "articulo": articulo,
+                    "mensaje":  f"Precio {diferencia_pct*100:.1f}% sobre ML (${precio_interno:,.0f} vs ${precio_ml_med:,.0f})",
+                    "prioridad": "ALTA" if diferencia_pct > 0.25 else "MEDIA",
+                })
+            elif diferencia_pct < -umbral_desactualizacion:
+                alertas.append({
+                    "tipo":     "OPORTUNIDAD",
+                    "articulo": articulo,
+                    "mensaje":  f"Precio {abs(diferencia_pct)*100:.1f}% bajo ML — podés subir",
+                    "prioridad": "MEDIA",
+                })
+        else:
+            fila.update({
+                "precio_ml_min":  None,
+                "precio_ml_max":  None,
+                "precio_ml_med":  None,
+                "n_competidores": 0,
+                "diferencia_pct": None,
+                "match_query":    None,
+            })
+
+        if margen_pct is not None and margen_pct < margen_minimo:
+            alertas.append({
+                "tipo":     "MARGEN_BAJO",
+                "articulo": articulo,
+                "mensaje":  f"Margen {margen_pct*100:.1f}% bajo mínimo ({margen_minimo*100:.0f}%)",
+                "prioridad": "ALTA",
+            })
+
+        comparacion_rows.append(fila)
+
+    df_comp = pd.DataFrame(comparacion_rows)
+
+    # Ranking por margen
+    df_margen = df_comp[df_comp["margen_pct"].notna()].sort_values(
+        "margen_pct", ascending=False
+    )
+
+    estadisticas = {
+        "total_articulos":    len(df_comp),
+        "con_comparacion_ml": int(df_comp["precio_ml_med"].notna().sum()),
+        "alertas_total":      len(alertas),
+        "alertas_alta":       sum(1 for a in alertas if a["prioridad"] == "ALTA"),
+        "margen_promedio":    round(df_comp["margen_pct"].mean(), 1) if "margen_pct" in df_comp else None,
+        "fecha_analisis":     datetime.now().isoformat(),
+    }
+
+    _log(f"  ✅ Análisis completo: {len(comparacion_rows)} artículos, {len(alertas)} alertas", log_func)
+
+    return {
+        "comparacion":    df_comp,
+        "alertas":        alertas,
+        "ranking_margen": df_margen,
+        "estadisticas":   estadisticas,
+        "ml_stats":       ml_stats,
+    }
+
+
+# ══════════════════════════════════════════════════════════════
+# MARKET RESEARCH — Tendencias + IA
+# ══════════════════════════════════════════════════════════════
+
+def obtener_tendencias_pytrends(
+    keywords: list[str],
+    timeframe: str = "today 3-m",
+    log_func: LogFunc = None,
+) -> dict:
+    """
+    Obtiene tendencias de búsqueda via pytrends (Google Trends).
+    timeframe: 'today 1-m', 'today 3-m', 'today 12-m'
+    """
+    if not PYTRENDS_OK:
+        _log("⚠ pytrends no instalado. Ejecutá: pip install pytrends", log_func)
+        return {}
+
+    _log(f"📈 Google Trends: {keywords}...", log_func)
+    try:
+        pt = _TrendReq(hl="es-AR", tz=-180, timeout=(10, 25))
+        # ML admite máx 5 keywords por vez
+        chunks = [keywords[i:i+5] for i in range(0, len(keywords), 5)]
+        resultado = {}
+        for chunk in chunks:
+            pt.build_payload(chunk, timeframe=timeframe, geo="AR")
+            df = pt.interest_over_time()
+            if not df.empty:
+                for kw in chunk:
+                    if kw in df.columns:
+                        resultado[kw] = {
+                            "promedio":  round(float(df[kw].mean()), 1),
+                            "maximo":    int(df[kw].max()),
+                            "tendencia": "SUBE" if df[kw].iloc[-1] > df[kw].iloc[0] else "BAJA",
+                            "serie":     df[kw].tolist(),
+                        }
+            time.sleep(2)
+        _log(f"  ✅ Tendencias obtenidas para {len(resultado)} keywords", log_func)
+        return resultado
+    except Exception as e:
+        _log(f"❌ Error Google Trends: {e}", log_func)
+        return {}
+
+
+def ranking_mas_vendidos_ml(
+    categoria: str = "electrónica",
+    max_items: int = 30,
+    log_func: LogFunc = None,
+) -> list[dict]:
+    """Obtiene los productos más vendidos de una categoría en ML."""
+    try:
+        import requests
+    except ImportError:
+        return []
+
+    _log(f"🏆 Ranking más vendidos: {categoria}...", log_func)
+
+    url = "https://api.mercadolibre.com/sites/MLA/search"
+    params = {
+        "q":        categoria,
+        "sort":     "sold_quantity_desc",
+        "limit":    min(max_items, 50),
+        "condition": "new",
+    }
+
+    try:
+        resp = requests.get(url, params=params, timeout=15)
+        resp.raise_for_status()
+        items = resp.json().get("results", [])
+        ranking = []
+        for i, item in enumerate(items[:max_items], 1):
+            ranking.append({
+                "posicion":   i,
+                "titulo":     item.get("title", ""),
+                "precio":     item.get("price", 0),
+                "vendidos":   item.get("sold_quantity", 0),
+                "disponibles": item.get("available_quantity", 0),
+                "vendedor":   item.get("seller", {}).get("nickname", ""),
+                "url":        item.get("permalink", ""),
+            })
+        _log(f"  ✅ {len(ranking)} productos en ranking", log_func)
+        return ranking
+    except Exception as e:
+        _log(f"❌ Error ranking ML: {e}", log_func)
+        return []
+
+
+def recomendaciones_ia(
+    analisis: dict,
+    contexto_negocio: str = "distribuidora mayorista en Argentina",
+    log_func: LogFunc = None,
+) -> str:
+    """
+    Genera recomendaciones de pricing con Claude AI.
+    Recibe el dict de analizar_precios() y devuelve texto con insights.
+    """
+    try:
+        import requests as _req
+    except ImportError:
+        return "❌ requests no disponible"
+
+    _log("🤖 Generando recomendaciones con IA...", log_func)
+
+    # Preparar resumen para el prompt
+    stats    = analisis.get("estadisticas", {})
+    alertas  = analisis.get("alertas", [])[:10]  # top 10
+    df_comp  = analisis.get("comparacion")
+
+    resumen_alertas = "\n".join(
+        f"- [{a['prioridad']}] {a['tipo']}: {a['articulo']} — {a['mensaje']}"
+        for a in alertas
+    ) or "Sin alertas críticas."
+
+    top_margen = ""
+    if df_comp is not None and not df_comp.empty and "margen_pct" in df_comp.columns:
+        top5 = df_comp.nlargest(5, "margen_pct")[["articulo", "margen_pct", "precio_interno"]]
+        low5 = df_comp.nsmallest(5, "margen_pct")[["articulo", "margen_pct", "precio_interno"]]
+        top_margen = f"Top 5 margen alto:\n{top5.to_string(index=False)}\n\nTop 5 margen bajo:\n{low5.to_string(index=False)}"
+
+    prompt = f"""Sos un experto en estrategia de precios para una {contexto_negocio}.
+
+Recibís este análisis de pricing:
+
+ESTADÍSTICAS GENERALES:
+- Artículos analizados: {stats.get('total_articulos', 0)}
+- Con comparación ML: {stats.get('con_comparacion_ml', 0)}
+- Alertas totales: {stats.get('alertas_total', 0)} ({stats.get('alertas_alta', 0)} de alta prioridad)
+- Margen promedio: {stats.get('margen_promedio', 'N/D')}%
+
+ALERTAS PRINCIPALES:
+{resumen_alertas}
+
+{top_margen}
+
+Generá recomendaciones concretas y accionables:
+1. Qué precios ajustar urgente (esta semana)
+2. Oportunidades de mejora de margen
+3. Estrategia general de pricing para el contexto local
+4. 3 acciones inmediatas priorizadas
+
+Respondé en español, de forma directa y práctica. Máximo 400 palabras."""
+
+    try:
+        resp = _req.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={"Content-Type": "application/json"},
+            json={
+                "model": "claude-sonnet-4-20250514",
+                "max_tokens": 1000,
+                "messages": [{"role": "user", "content": prompt}],
+            },
+            timeout=30,
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        texto = data["content"][0]["text"]
+        _log("  ✅ Recomendaciones generadas", log_func)
+        return texto
+    except Exception as e:
+        _log(f"❌ Error IA: {e}", log_func)
+        return f"Error generando recomendaciones: {e}"
+
+
+# ══════════════════════════════════════════════════════════════
+# HISTORIAL — Snapshots temporales
+# ══════════════════════════════════════════════════════════════
+
+def guardar_snapshot(
+    resultados_ml: dict,
+    etiqueta: str = "",
+    log_func: LogFunc = None,
+):
+    """Guarda los precios scrapeados para tracking histórico."""
+    snapshot = {
+        "fecha":    datetime.now().isoformat(),
+        "etiqueta": etiqueta or date.today().isoformat(),
+        "datos":    resultados_ml,
+    }
+
+    historial = []
+    if _HISTORY_FILE.exists():
+        try:
+            historial = json.loads(_HISTORY_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            historial = []
+
+    historial.append(snapshot)
+    # Guardar últimos 90 snapshots
+    historial = historial[-90:]
+    _HISTORY_FILE.write_text(json.dumps(historial, ensure_ascii=False, indent=2), encoding="utf-8")
+    _log(f"💾 Snapshot guardado ({len(historial)} en historial)", log_func)
+
+
+def cargar_historial_precios(query: str) -> list[dict]:
+    """Retorna la evolución de precios de una query a lo largo del tiempo."""
+    if not _HISTORY_FILE.exists():
+        return []
+    try:
+        historial = json.loads(_HISTORY_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+
+    serie = []
+    for snap in historial:
+        datos_q = snap["datos"].get(query, [])
+        if datos_q:
+            precios = [i["precio"] for i in datos_q if i["precio"] > 0]
+            if precios:
+                serie.append({
+                    "fecha":          snap["fecha"][:10],
+                    "precio_min":     min(precios),
+                    "precio_max":     max(precios),
+                    "precio_promedio": round(sum(precios) / len(precios), 2),
+                    "n":              len(precios),
+                })
+    return serie
+
+
+# ══════════════════════════════════════════════════════════════
+# FUNCIÓN PRINCIPAL — Orquestador completo
+# ══════════════════════════════════════════════════════════════
+
+def ejecutar_market_research(
+    queries: list[str],
+    df_interno=None,
+    incluir_tendencias: bool = True,
+    incluir_ia: bool = True,
+    max_por_query: int = 20,
+    log_func: LogFunc = None,
+) -> dict:
+    """
+    Orquesta el research completo:
+    1. Scraping ML
+    2. Tendencias Google (opcional)
+    3. Análisis de precios vs interno (si se pasa df)
+    4. Ranking más vendidos
+    5. Recomendaciones IA (opcional)
+    6. Guarda snapshot histórico
+
+    Returns dict con todos los resultados.
+    """
+    resultado = {}
+
+    # 1. Scraping ML
+    _log("─" * 50, log_func)
+    _log("🛒 FASE 1: Scraping Mercado Libre", log_func)
+    ml_data = scrape_multiple_queries(queries, max_por_query, log_func)
+    resultado["ml_data"] = ml_data
+
+    # 2. Tendencias
+    if incluir_tendencias:
+        _log("─" * 50, log_func)
+        _log("📈 FASE 2: Google Trends", log_func)
+        resultado["tendencias"] = obtener_tendencias_pytrends(queries, log_func=log_func)
+
+    # 3. Análisis vs interno
+    if df_interno is not None:
+        _log("─" * 50, log_func)
+        _log("📊 FASE 3: Análisis de precios internos", log_func)
+        resultado["analisis"] = analizar_precios(df_interno, ml_data, log_func=log_func)
+
+    # 4. Ranking
+    _log("─" * 50, log_func)
+    _log("🏆 FASE 4: Ranking más vendidos", log_func)
+    categoria = queries[0] if queries else "productos"
+    resultado["ranking"] = ranking_mas_vendidos_ml(categoria, log_func=log_func)
+
+    # 5. IA
+    if incluir_ia and "analisis" in resultado:
+        _log("─" * 50, log_func)
+        _log("🤖 FASE 5: Recomendaciones IA", log_func)
+        resultado["recomendaciones_ia"] = recomendaciones_ia(
+            resultado["analisis"], log_func=log_func
+        )
+
+    # 6. Snapshot
+    guardar_snapshot(ml_data, log_func=log_func)
+
+    _log("─" * 50, log_func)
+    _log("✅ Market Research completo.", log_func)
+    return resultado
+
+
+def exportar_excel(resultado: dict, nombre: str = "", log_func: LogFunc = None) -> str:
+    """Exporta el resultado completo a Excel con múltiples hojas."""
+    try:
+        import pandas as pd
+        from openpyxl import load_workbook
+        from openpyxl.styles import PatternFill, Font, Alignment
+    except ImportError:
+        _log("❌ openpyxl no disponible", log_func)
+        return ""
+
+    ts   = datetime.now().strftime("%Y%m%d_%H%M%S")
+    path = _PRICING_DIR / f"pricing_research_{nombre or ts}.xlsx"
+
+    with pd.ExcelWriter(path, engine="openpyxl") as writer:
+
+        # Hoja 1: Comparación
+        if "analisis" in resultado and "comparacion" in resultado["analisis"]:
+            df = resultado["analisis"]["comparacion"]
+            df.to_excel(writer, sheet_name="Comparacion ML", index=False)
+
+        # Hoja 2: Alertas
+        if "analisis" in resultado and resultado["analisis"].get("alertas"):
+            pd.DataFrame(resultado["analisis"]["alertas"]).to_excel(
+                writer, sheet_name="Alertas", index=False
+            )
+
+        # Hoja 3: Ranking ML
+        if resultado.get("ranking"):
+            pd.DataFrame(resultado["ranking"]).to_excel(
+                writer, sheet_name="Ranking MasVendidos", index=False
+            )
+
+        # Hoja 4: Todos los precios ML
+        ml_rows = []
+        for query, items in resultado.get("ml_data", {}).items():
+            for item in items:
+                item["query_busqueda"] = query
+                ml_rows.append(item)
+        if ml_rows:
+            pd.DataFrame(ml_rows).to_excel(writer, sheet_name="Precios ML", index=False)
+
+        # Hoja 5: Recomendaciones IA
+        if resultado.get("recomendaciones_ia"):
+            pd.DataFrame([{"Recomendaciones": resultado["recomendaciones_ia"]}]).to_excel(
+                writer, sheet_name="Recomendaciones IA", index=False
+            )
+
+    _log(f"📂 Excel exportado: {path.name}", log_func)
+    return str(path)
