@@ -89,11 +89,8 @@ def _parse_monto(texto: str) -> float:
     t = re.sub(r'[^\d,.]', '', t)
     if not t:
         return 0.0
-    # Formato AR: 1.234,56
-    if ',' in t and '.' in t:
-        t = t.replace('.', '').replace(',', '.')
-    elif ',' in t:
-        t = t.replace(',', '.')
+    # Formato US: 1,234.56
+    t = t.replace(',', '')
     try:
         v = float(t)
         return -v if negativo else v

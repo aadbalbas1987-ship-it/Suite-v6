@@ -1,36 +1,51 @@
-
 import sqlite3
 from sqlite3 import Error
 import os
 import logging
+import time
+from pathlib import Path
 
-# --- Configuración ---
-# Nombre del archivo de la base de datos.
-# Se guardará en el directorio raíz del proyecto.
+# Configuración
 DB_NAME = "rpa_suite.db"
-DB_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), DB_NAME)
+DB_PATH = Path(__file__).parent.parent / DB_NAME
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
+def retry_on_lock(func):
+    """Decorador para reintentar operaciones si la base de datos está bloqueada."""
+    def wrapper(*args, **kwargs):
+        import random
+        intentos = 10
+        for i in range(intentos):
+            try:
+                return func(*args, **kwargs)
+            except sqlite3.OperationalError as e:
+                if "locked" in str(e).lower() and i < intentos - 1:
+                    # Espera aleatoria progresiva para evitar colisiones múltiples
+                    espera = random.uniform(0.1, 0.8) * (1.5 ** i)
+                    logging.warning(f"⚠️ Base de datos ocupada (locked). Reintentando {i+1}/{intentos} en {espera:.2f}s...")
+                    time.sleep(espera)
+                else:
+                    raise e
+        return func(*args, **kwargs)
+    return wrapper
+
 def get_db_connection():
-    """Crea y devuelve una conexión a la base de datos SQLite."""
+    """Crea y devuelve una conexión a la base de datos SQLite con timeout de seguridad."""
     conn = None
     try:
-        conn = sqlite3.connect(DB_PATH)
-        logging.info(f"Conexión a SQLite DB en '{DB_PATH}' exitosa.")
+        conn = sqlite3.connect(DB_PATH, timeout=20)
+        conn.row_factory = sqlite3.Row
+        # Habilitar WAL: Permite lectura (Dashboards) y escritura (Robots) en simultáneo sin bloquearse.
+        conn.execute('PRAGMA journal_mode=WAL;')
+        conn.execute('PRAGMA synchronous=NORMAL;')
     except Error as e:
         logging.error(f"Error al conectar con la base de datos: {e}")
     return conn
 
+@retry_on_lock
 def execute_query(query, params=(), is_commit=False):
-    """
-    Ejecuta una consulta SQL genérica.
-
-    :param query: La consulta SQL a ejecutar.
-    :param params: Tupla con los parámetros para la consulta.
-    :param is_commit: True si la consulta es de modificación (INSERT, UPDATE, DELETE).
-    :return: Filas resultantes si es una consulta de selección, o None.
-    """
+    """Ejecuta una consulta SQL genérica con manejo de reintentos."""
     conn = get_db_connection()
     if conn is None:
         return None
@@ -40,7 +55,6 @@ def execute_query(query, params=(), is_commit=False):
         cursor.execute(query, params)
         if is_commit:
             conn.commit()
-            logging.info("Query ejecutada y commiteada con éxito.")
             return None
         else:
             rows = cursor.fetchall()
@@ -54,74 +68,42 @@ def execute_query(query, params=(), is_commit=False):
 
 def create_tables():
     """Crea las tablas iniciales en la base de datos si no existen."""
-    
-    sql_create_cargas_stock_table = """
-    CREATE TABLE IF NOT EXISTS cargas_stock (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-        sku TEXT NOT NULL,
-        cantidad_cargada REAL NOT NULL,
-        robot_origen TEXT NOT NULL
-    );
-    """
-
-    sql_create_ventas_historicas_table = """
-    CREATE TABLE IF NOT EXISTS ventas_historicas (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        timestamp DATETIME NOT NULL,
-        sku TEXT NOT NULL,
-        cantidad_vendida REAL NOT NULL,
-        precio_unitario REAL,
-        id_cliente TEXT
-    );
-    """
-    
-    sql_create_precios_competencia_table = """
-    CREATE TABLE IF NOT EXISTS precios_competencia (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-        sku TEXT NOT NULL,
-        competidor TEXT NOT NULL,
-        precio REAL NOT NULL
-    );
-    """
-
-    sql_create_historial_precios_propios_table = """
-    CREATE TABLE IF NOT EXISTS historial_precios_propios (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-        sku TEXT NOT NULL,
-        costo REAL,
-        precio_salon REAL,
-        precio_mayorista REAL,
-        precio_galpon REAL,
-        robot_origen TEXT
-    );
-    """
-
-    logging.info("Intentando crear las tablas si no existen...")
-    execute_query(sql_create_cargas_stock_table, is_commit=True)
-    execute_query(sql_create_ventas_historicas_table, is_commit=True)
-    execute_query(sql_create_precios_competencia_table, is_commit=True)
-    execute_query(sql_create_historial_precios_propios_table, is_commit=True)
-    logging.info("Proceso de creación de tablas finalizado.")
+    sql_queries = [
+        """CREATE TABLE IF NOT EXISTS cargas_stock (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            sku TEXT NOT NULL,
+            cantidad_cargada REAL NOT NULL,
+            robot_origen TEXT NOT NULL
+        );""",
+        """CREATE TABLE IF NOT EXISTS ventas_historicas (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp DATETIME NOT NULL,
+            sku TEXT NOT NULL,
+            cantidad_vendida REAL NOT NULL,
+            precio_unitario REAL,
+            id_cliente TEXT
+        );""",
+        """CREATE TABLE IF NOT EXISTS precios_competencia (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            sku TEXT NOT NULL,
+            competidor TEXT NOT NULL,
+            precio REAL NOT NULL
+        );""",
+        """CREATE TABLE IF NOT EXISTS historial_precios_propios (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            sku TEXT NOT NULL,
+            costo REAL,
+            precio_salon REAL,
+            precio_mayorista REAL,
+            precio_galpon REAL,
+            robot_origen TEXT
+        );"""
+    ]
+    for q in sql_queries:
+        execute_query(q, is_commit=True)
 
 if __name__ == '__main__':
-    """
-    Si se ejecuta este script directamente, se asegura de que la
-    base de datos y las tablas estén creadas.
-    """
-    logging.info("Ejecutando inicializador de la base de datos...")
     create_tables()
-    # Ejemplo de inserción
-    logging.info("Insertando un dato de ejemplo en 'cargas_stock'...")
-    sql_ejemplo = "INSERT INTO cargas_stock (sku, cantidad_cargada, robot_origen) VALUES (?, ?, ?)"
-    execute_query(sql_ejemplo, params=("PROD-001", 50, "ejemplo_directo"), is_commit=True)
-    
-    # Ejemplo de lectura
-    logging.info("Leyendo datos de ejemplo de 'cargas_stock'...")
-    rows = execute_query("SELECT * FROM cargas_stock")
-    if rows:
-        for row in rows:
-            logging.info(f"Dato leído: {row}")
-

@@ -146,7 +146,7 @@ def parsear_ventas_csv(file_obj, semana: int) -> pd.DataFrame:
 
 def limpiar_num(s) -> float:
     try:
-        return float(str(s).replace('.', '').replace(',', '.').strip())
+        return float(str(s).replace(',', '').strip())
     except:
         return 0.0
 
@@ -159,6 +159,7 @@ def procesar_datos(
     lpcio_bytes: bytes,
     lead_time_dias: int,
     factor_seg: float,
+    mes_analizado: str = "",
 ):
     """Motor principal de análisis. Cacheable."""
 
@@ -241,6 +242,15 @@ def procesar_datos(
         lambda r: r['UNIDADES_MES'] * FACTOR_OFERTA if r['EN_OFERTA'] else r['UNIDADES_MES'],
         axis=1
     )
+    
+    # ── ESTACIONALIDAD PROACTIVA (IA ML Rule-based) ───────────
+    factor_estacional = 1.0
+    if mes_analizado.lower() in ["noviembre", "diciembre"]:
+        factor_estacional = 1.25  # Anticipar consumo de fiestas
+    elif mes_analizado.lower() in ["enero", "febrero"]:
+        factor_estacional = 0.85  # Ajustar a la baja por vacaciones
+        
+    df['DEMANDA_AJUSTADA'] = df['DEMANDA_AJUSTADA'] * factor_estacional
     df['DEMANDA_SEMANAL'] = df['DEMANDA_AJUSTADA'] / 4
 
     # ── 8. Stock de seguridad y punto de reorden ──────────────
@@ -428,6 +438,7 @@ with st.spinner("Procesando datos..."):
         lpcio_bytes=up_lpcio.read(),
         lead_time_dias=lead_time,
         factor_seg=factor_seg,
+        mes_analizado=mes_label,
     )
 
 
@@ -658,6 +669,31 @@ with tab1:
 # ── TAB 2: ALERTAS CRÍTICAS ───────────────────────────────────
 with tab2:
     col_q, col_s = st.columns(2)
+    
+    # --- BOT DE NOTIFICACIONES WEBHOOK ---
+    quiebres_A = df[(df['ALERTA'] == 'QUIEBRE') & (df['ABC'] == 'A')]
+    if not quiebres_A.empty:
+        st.error(f"🚨 ¡ALERTA CRÍTICA! Tenés {len(quiebres_A)} artículo(s) Clase A quebrados. Pérdida de caja inminente.")
+        if st.button("📲 Enviar Alerta por WhatsApp", type="primary"):
+            try:
+                import urllib.parse
+                phone = os.getenv("WHATSAPP_PHONE", "")
+                apikey = os.getenv("WHATSAPP_APIKEY", "")
+                
+                if not phone or not apikey:
+                    st.warning("⚠️ Faltan WHATSAPP_PHONE y WHATSAPP_APIKEY en Configuración (.env)")
+                else:
+                    mensaje = f"🚨 *ALERTA RPA SUITE*\n\nTenés {len(quiebres_A)} artículos CLASE A quebrados.\n\n💸 Pérdida diaria est.: ${float((quiebres_A['DEMANDA_DIARIA'] * quiebres_A['Pvta_num']).sum()):,.0f}\n\nEjemplos:\n- " + "\n- ".join(quiebres_A['DESCRIPCION'].head(3).tolist())
+                    mensaje_encoded = urllib.parse.quote(mensaje)
+                    url = f"https://api.callmebot.com/whatsapp.php?phone={phone}&text={mensaje_encoded}&apikey={apikey}"
+                    
+                    resp = requests.get(url, timeout=5)
+                    if resp.status_code == 200:
+                        st.success("✅ Alerta enviada con éxito a tu WhatsApp.")
+                    else:
+                        st.warning(f"Error al enviar: {resp.text}")
+            except Exception as e:
+                st.warning(f"No se pudo enviar la notificación: {e}")
 
     with col_q:
         st.markdown(f"#### 🔴 Quiebres y puntos de reorden")
@@ -726,6 +762,28 @@ with tab2:
                     <div style="color:#5A6070;font-size:0.8rem;line-height:1.5;">{motivo}</div>
                 </div>
                 """, unsafe_allow_html=True)
+            
+    # --- HEATMAP DE STOCK INMOVILIZADO ---
+    st.markdown("<hr style='margin: 20px 0;'>", unsafe_allow_html=True)
+    st.markdown("#### 🗺️ Heatmap: Capital Inmovilizado (Dinero dormido en Sobrestock)")
+    df_hm = df[df['ALERTA'].isin(['SOBRESTOCK', 'RIESGO_VENCIMIENTO'])].copy()
+    if not df_hm.empty:
+        df_hm['Capital_Inmovilizado'] = df_hm['STOCK_FISICO'] * df_hm['Pvta_num']
+        df_hm['Categoría'] = df_hm['ABC'].astype(str).fillna("C")
+        fig_hm = px.treemap(
+            df_hm, 
+            path=[px.Constant("Sobrestock Total"), 'Categoría', 'DESCRIPCION'],
+            values='Capital_Inmovilizado',
+            color='DIAS_COBERTURA',
+            color_continuous_scale='Reds',
+            title="Tamaño de la caja = Dinero Inmovilizado | Color = Días de Cobertura (Rojo es peor)",
+            hover_data={'Capital_Inmovilizado': ':,.0f', 'DIAS_COBERTURA': ':.0f'}
+        )
+        fig_hm.update_traces(textinfo="label+value")
+        fig_hm.update_layout(margin=dict(t=40, l=0, r=0, b=0), height=450)
+        st.plotly_chart(fig_hm, use_container_width=True)
+    else:
+        st.success("¡Excelente! No hay capital inmovilizado crítico en sobrestock.")
 
 
 # ── TAB 3: COMPORTAMIENTO SEMANAL ─────────────────────────────

@@ -292,8 +292,7 @@ def procesar_archivos(f_ventas, f_precios, f_valor):
     def _num(s):
         return pd.to_numeric(
             s.astype(str).str.strip()
-             .str.replace('.', '', regex=False)
-             .str.replace(',', '.'),
+             .str.replace(',', '', regex=False),
             errors='coerce'
         )
 
@@ -404,7 +403,7 @@ def procesar_clientes(f_clientes):
         col_tot  = next((c for c in df.columns if c.lower() in ['total','venta','importe']), None)
         col_desc = next((c for c in df.columns if c.lower() in ['descripcion','nombre','cliente']), None)
         if not col_tot: return None
-        venta_str = df[col_tot].astype(str).str.strip().str.replace('.','' ,regex=False).str.replace(',','.')
+        venta_str = df[col_tot].astype(str).str.strip().str.replace(',', '', regex=False)
         df['Venta_$'] = pd.to_numeric(venta_str, errors='coerce')
         df = df.dropna(subset=['Venta_$'])
         if col_desc:
@@ -814,12 +813,13 @@ else:
     # ============================================================
     # TABS
     # ============================================================
-    tab_overview, tab_abc, tab_alertas, tab_familias, tab_ofertas, tab_comparacion, tab_clientes = st.tabs([
+    tab_overview, tab_abc, tab_alertas, tab_familias, tab_ofertas, tab_simulador, tab_comparacion, tab_clientes = st.tabs([
         "📊 Overview",
         "🔬 Análisis ABC",
         "⚠️ Alertas Stock",
         "🏷️ Familias",
         "🎯 Ofertas",
+        "🎛️ Simulador",
         "📅 Comparación",
         "👥 Clientes",
     ])
@@ -1430,6 +1430,62 @@ else:
                 use_container_width=True, height=380, hide_index=True,
             )
 
+
+    # ══════════════════════════════════════════════════════════════
+    # TAB SIMULADOR WHAT-IF
+    # ══════════════════════════════════════════════════════════════
+    with tab_simulador:
+        _boton_exportar_tab('Simulador', 'sim')
+        st.markdown('<div class="section-header"><h3>🎛️ Simulador de Escenarios (What-If)</h3></div>', unsafe_allow_html=True)
+        st.caption("Proyectá el impacto en la caja al variar precios, considerando la elasticidad estimada de la demanda.")
+
+        col_sim1, col_sim2 = st.columns([1, 3])
+        with col_sim1:
+            var_precio = st.slider("Variación de Precio general (%)", min_value=-30.0, max_value=50.0, value=10.0, step=1.0)
+            elasticidad = st.slider("Caída de ventas por cada 1% de aumento", min_value=0.0, max_value=2.0, value=0.5, step=0.1)
+            st.markdown(f"""
+            <div style="background:#F0FDF4;border-left:4px solid #16A34A;padding:10px;border-radius:5px;font-size:0.85rem;">
+                <b>Regla de Elasticidad:</b><br>
+                Al variar el precio un <b>{var_precio:+.1f}%</b>, se asume que las unidades cambiarán un <b>{-var_precio*elasticidad:+.1f}%</b>.
+            </div>
+            """, unsafe_allow_html=True)
+
+        with col_sim2:
+            df_sim = df[['SKU', 'DESCRIPCION', 'DesFam', 'Precio_Unit', 'Unidades_Calc', 'Venta_$']].copy()
+            df_sim = df_sim[df_sim['Precio_Unit'] > 0]
+            
+            var_unidades = - (var_precio * elasticidad)
+            df_sim['Nuevo_Precio'] = df_sim['Precio_Unit'] * (1 + var_precio/100)
+            df_sim['Nuevas_Unidades'] = (df_sim['Unidades_Calc'] * (1 + var_unidades/100)).clip(lower=0)
+            df_sim['Nueva_Venta'] = df_sim['Nuevo_Precio'] * df_sim['Nuevas_Unidades']
+            df_sim['Impacto_$'] = df_sim['Nueva_Venta'] - df_sim['Venta_$']
+            
+            total_actual = df_sim['Venta_$'].sum()
+            total_nuevo = df_sim['Nueva_Venta'].sum()
+            impacto_total = total_nuevo - total_actual
+            
+            k1, k2, k3 = st.columns(3)
+            k1.metric("Venta Proyectada", fmt_millones(total_nuevo), delta=fmt_millones(impacto_total))
+            k2.metric("Unidades Proyectadas", fmt_num(df_sim['Nuevas_Unidades'].sum()), delta=f"{var_unidades:+.1f}%")
+            k3.metric("Ticket Promedio Simulado", f"${total_nuevo/df_sim['Nuevas_Unidades'].sum() if df_sim['Nuevas_Unidades'].sum() else 0:,.0f}")
+            
+            fig_wf = go.Figure(go.Waterfall(
+                name="Impacto", orientation="v", measure=["absolute", "relative", "total"],
+                x=["Caja Actual", "Impacto Simulado", "Caja Proyectada"],
+                y=[total_actual, impacto_total, total_nuevo],
+                text=[fmt_millones(total_actual), fmt_millones(impacto_total), fmt_millones(total_nuevo)],
+                textposition="outside", connector={"line":{"color":"rgb(63, 63, 63)"}}
+            ))
+            fig_wf.update_layout(height=300, margin=dict(t=40, b=20, l=20, r=20), plot_bgcolor='white', showlegend=False)
+            st.plotly_chart(fig_wf, use_container_width=True)
+
+        st.dataframe(
+            df_sim.sort_values('Impacto_$', ascending=False).head(50).rename(columns={
+                'DESCRIPCION': 'Artículo', 'DesFam': 'Familia', 'Precio_Unit': 'Precio Base',
+                'Unidades_Calc': 'Unidades Base', 'Venta_$': 'Caja Base', 'Impacto_$': 'Impacto Neto'
+            }),
+            use_container_width=True, height=300, hide_index=True
+        )
 
     # ══════════════════════════════════════════════════════════════
     # TAB 6 — COMPARACIÓN

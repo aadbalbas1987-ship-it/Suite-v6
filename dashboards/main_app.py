@@ -7,7 +7,10 @@ st.set_page_config(page_title="RPA Suite - Portal", layout="wide", page_icon="�
 
 # Leer configuración de dashboards
 config_path = Path(__file__).parent.parent / "config.toml"
-config = toml.load(config_path)
+try:
+    config = toml.load(config_path)
+except Exception:
+    config = {}
 dashboards_config = config.get("dashboards", {})
 
 # Definir las páginas apuntando a los archivos existentes
@@ -17,25 +20,23 @@ pg_pricing = st.Page("pricing_dashboard.py", title="Pricing & Research", icon="�
 pg_conciliacion = st.Page("conciliacion_dashboard.py", title="Conciliación Bancaria", icon="🏦")
 pg_normalizador = st.Page("normalizador_dashboard.py", title="Normalizador Maestro", icon="📋")
 pg_crm = st.Page("crm_dashboard.py", title="Análisis CRM", icon="👥")
+pg_auditoria = st.Page("auditoria_dashboard.py", title="Auditoría de Robots", icon="🕵️")
+pg_cxc = st.Page("cxc_dashboard.py", title="Cuentas por Cobrar", icon="💳")
 
 # Listas de páginas por sección
 operaciones_ventas = [pg_bi, pg_quiebres, pg_crm]
 estrategia_precios = [pg_pricing]
-finanzas_maestros = [pg_conciliacion, pg_normalizador]
+finanzas_maestros = [pg_conciliacion, pg_cxc, pg_normalizador, pg_auditoria]
 
 if dashboards_config.get("pricing_intelligence", True):
     pg_pricing_intel = st.Page("pricing_intel_dashboard.py", title="Pricing Intelligence", icon="🎯")
     estrategia_precios.append(pg_pricing_intel)
 
-if dashboards_config.get("cxc", True):
-    pg_cxc = st.Page("cxc_dashboard.py", title="Cuentas por Cobrar", icon="💳")
-    finanzas_maestros.append(pg_cxc)
-
 # Estructurar la navegación en el menú lateral
 pg = st.navigation({
     "Operaciones y Ventas": operaciones_ventas,
     "Estrategia de Precios": estrategia_precios,
-    "Finanzas y Maestros": finanzas_maestros
+    "Finanzas, Maestros y Control": finanzas_maestros
 })
 
 # Encabezado estético en el menú lateral para todas las páginas

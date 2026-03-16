@@ -82,14 +82,52 @@ def limpiar_sku(v) -> str | None:
 
 
 def f_monto(v) -> str:
-    """Formatea un valor numérico como string con 2 decimales."""
+    """Formatea un valor numérico como string con 2 decimales, entendiendo comas y puntos."""
     if pd.isna(v) or str(v).strip().lower() in ['nan', 'none', '']:
         return "0.00"
+    val = str(v).strip().replace('$', '').replace(' ', '')
+    if ',' in val and '.' in val:
+        val = val.replace('.', '').replace(',', '.')
+    elif ',' in val and '.' not in val:
+        val = val.replace(',', '.')
     try:
-        valor = float(str(v).replace(',', '.'))
-        return "{:.2f}".format(valor)
+        return "{:.2f}".format(float(val))
     except Exception:
         return "0.00"
+
+
+# ============================================================
+# 2.5 MAESTRO DE DESCRIPCIONES (Caché en Memoria O(1))
+# ============================================================
+_MAESTRO_CACHE = {}
+
+def cargar_maestro_descripciones(base_dir) -> int:
+    """Carga 'descripciones maestras.xlsx' en RAM para búsquedas instantáneas."""
+    global _MAESTRO_CACHE
+    # Si ya está en memoria, no volver a leer el Excel (evita lag)
+    if _MAESTRO_CACHE:
+        return len(_MAESTRO_CACHE)
+        
+    ruta_xls = Path(base_dir) / "Descripcionesmaestras.xlsx"
+    
+    if ruta_xls.exists():
+        try:
+            df = pd.read_excel(ruta_xls, usecols=[0, 1], header=None, names=['sku', 'desc'], dtype=str)
+            if not str(df.iloc[0]['sku']).strip().isdigit():
+                df = df.iloc[1:]  # Saltar cabecera
+            
+            df = df.dropna(subset=['sku'])
+            for _, row in df.iterrows():
+                s = limpiar_sku(row['sku'])
+                if s:
+                    _MAESTRO_CACHE[s] = str(row['desc']).strip()
+            return len(_MAESTRO_CACHE)
+        except Exception as e:
+            print(f"Error cargando maestro de descripciones: {e}")
+    return 0
+
+def obtener_descripcion_maestra(sku: str) -> str:
+    return _MAESTRO_CACHE.get(str(sku), "")
 
 
 def forzar_caps_off():
@@ -372,7 +410,7 @@ def procesar_analitica_conteo(ruta_csv_sistema: str, ruta_excel_conteo: str, log
         def clean_num(x):
             if pd.isna(x):
                 return 0.0
-            return float(str(x).replace('.', '').replace(',', '.'))
+            return float(str(x).replace(',', '').strip())
 
         df_sis['cantidad_actual'] = df_sis['cantidad_actual'].apply(clean_num)
 
@@ -388,7 +426,9 @@ def procesar_analitica_conteo(ruta_csv_sistema: str, ruta_excel_conteo: str, log
         df_audit['total_ajustar'] = df_audit['cantidad_contada'] - df_audit['cantidad_actual'].fillna(0)
 
         df_final = df_audit[['sku', 'descripcion', 'cantidad_actual', 'cantidad_contada', 'total_ajustar']]
-        salida = "AUDITORIA_CONTEO_RESULTADO.xlsx"
+        dest_dir = Path(__file__).parent.parent / "procesados" / "AUDITORIA"
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        salida = str(dest_dir / "AUDITORIA_CONTEO_RESULTADO.xlsx")
         df_final.to_excel(salida, index=False, header=False)
         return salida
 

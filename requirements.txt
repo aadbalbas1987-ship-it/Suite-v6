@@ -17,7 +17,7 @@ matplotlib==3.8.3
 seaborn==0.13.2
 
 # IA y Machine Learning
-google-generativeai==0.4.1
+google-generativeai==0.8.3
 scikit-learn==1.4.1.post1
 
 # Redes, Criptografía y SSH

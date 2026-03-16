@@ -134,18 +134,30 @@ def leer_excel_articulos(ruta_excel: str, tiene_encabezados: bool = True) -> lis
         if not sku:
             continue
 
+        desc = _val(3, "")
+        col_4 = _val(4, "")
+        col_5 = _val(5, "")
+
+        # Auto-detectar plantilla vieja (donde Col E era PESABLE en vez de DESCRIPCION_IA)
+        if col_4 in ["0", "1", "0.0", "1.0"] and col_5 not in ["0", "1", "0.0", "1.0"]:
+            offset = -1
+            desc_ia = ""
+        else:
+            offset = 0
+            desc_ia = col_4
+
         art = {
             "sku":            sku,
             "uxb":            _int(1),
             "marca":          _val(2, ""),
-            "descripcion":    _val(3, ""),
-            "descripcion_ia": _val(4, "") or _val(3, ""),
-            "pesable":        _int(5, 0),
-            "peso_estandar":  _float(6),
-            "bultos_palet":   _int(7),
-            "dias_vencim":    _int(8),
-            "barcode":        _val(9),
-            "cod_proveedor":  _val(10, ""),
+            "descripcion":    desc,
+            "descripcion_ia": desc_ia or desc,
+            "pesable":        _int(5 + offset, 0),
+            "peso_estandar":  _float(6 + offset),
+            "bultos_palet":   _int(7 + offset),
+            "dias_vencim":    _int(8 + offset),
+            "barcode":        _val(9 + offset),
+            "cod_proveedor":  _val(10 + offset, ""),
             # categori se asigna luego
             "familia":  None,
             "dpto":     None,

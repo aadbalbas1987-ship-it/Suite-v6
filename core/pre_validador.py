@@ -15,6 +15,7 @@ from datetime import date, datetime
 from typing import Callable, Optional
 import pandas as pd
 
+from core.utils import obtener_descripcion_maestra
 from pathlib import Path
 import json
 
@@ -153,6 +154,7 @@ def validar_stock(df: pd.DataFrame, archivo: str = "") -> PreValidacion:
         if sku and sku.lower() not in ("none", "nan", ""):
             v.preview_filas.append({
                 "SKU": sku,
+                "Descripción": obtener_descripcion_maestra(sku)[:30],
                 "Cantidad": fila.iloc[1] if len(fila) > 1 else "-",
                 "ID Control": fila.iloc[2] if len(fila) > 2 else "-",
             })
@@ -220,6 +222,7 @@ def validar_ajuste(df: pd.DataFrame, archivo: str = "") -> PreValidacion:
         if sku and sku.lower() not in ("none", "nan", ""):
             v.preview_filas.append({
                 "SKU": sku,
+                "Descripción": obtener_descripcion_maestra(sku)[:30],
                 "Delta": fila.iloc[1] if len(fila) > 1 else "-",
                 "Gramaje": fila.iloc[3] if len(fila) > 3 else "-",
             })
@@ -322,6 +325,7 @@ def validar_precios(
         if sku and sku.lower() not in ("none", "nan", ""):
             v.preview_filas.append({
                 "SKU": sku,
+                "Descripción": obtener_descripcion_maestra(sku)[:30],
                 "Costo": fila.iloc[1] if len(fila) > 1 else "-",
                 "P.Salon": fila.iloc[2] if len(fila) > 2 else "-",
                 "Mayorista": fila.iloc[3] if len(fila) > 3 else "-",

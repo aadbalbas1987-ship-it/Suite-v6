@@ -20,7 +20,9 @@ from config import get_ssh_config
 
 pyautogui.FAILSAFE = True
 
-LOG_PATH = Path(os.path.expanduser("~")) / "Desktop" / "debug_descarga_datos.txt"
+_ROOT = Path(__file__).parent.parent
+LOG_PATH = _ROOT / "logs" / "debug_descarga_datos.txt"
+LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 
 # ══════════════════════════════════════════════════════════════

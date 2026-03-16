@@ -45,7 +45,7 @@ echo  OK: pip actualizado.
 echo.
 echo [3/7] Instalando dependencias CORE...
 echo  pandas, numpy, openpyxl, python-dotenv, paramiko,
-echo  streamlit, plotly, reportlab, customtkinter
+echo  streamlit, plotly, reportlab, customtkinter, requests, scikit-learn
 echo.
 
 pip install pandas --quiet
@@ -74,6 +74,12 @@ if errorlevel 1 (echo  ERROR: reportlab) else (echo  OK: reportlab)
 
 pip install customtkinter --quiet
 if errorlevel 1 (echo  ERROR: customtkinter) else (echo  OK: customtkinter)
+
+pip install requests --quiet
+if errorlevel 1 (echo  ERROR: requests) else (echo  OK: requests)
+
+pip install scikit-learn --quiet
+if errorlevel 1 (echo  ERROR: scikit-learn) else (echo  OK: scikit-learn)
 
 :: ============================================================
 :: DEPENDENCIAS WINDOWS (robots + watchdog)
@@ -129,11 +135,17 @@ if errorlevel 1 (echo  ERROR: google-generativeai) else (echo  OK: google-genera
 :: ============================================================
 echo.
 echo [6/7] Instalando opcionales...
-echo  pdfplumber (extractor PDFs de vinos)
+echo  pdfplumber, pywebview, qrcode
 echo.
 
 pip install pdfplumber --quiet
 if errorlevel 1 (echo  AVISO: pdfplumber no instalado (no critico)) else (echo  OK: pdfplumber)
+
+pip install pywebview --quiet
+if errorlevel 1 (echo  AVISO: pywebview no instalado (no critico)) else (echo  OK: pywebview)
+
+pip install qrcode --quiet
+if errorlevel 1 (echo  AVISO: qrcode no instalado (no critico)) else (echo  OK: qrcode)
 
 :: ============================================================
 :: VERIFICACION FINAL

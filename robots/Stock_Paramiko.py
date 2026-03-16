@@ -8,6 +8,7 @@ Operación "backdoor" directa por SSH.
 import time
 import re
 from typing import Optional
+from pathlib import Path
 
 try:
     import paramiko
@@ -18,6 +19,7 @@ except ImportError:
 from config import get_ssh_config
 from core.trazabilidad import Trazador, Estado
 from core.pre_validador import _limpiar_sku
+from core.utils import obtener_descripcion_maestra
 from core.file_manager import archivar_procesado
 from robots.Robot_Putty import validar_archivo_con_ia
 
@@ -45,7 +47,10 @@ class SSHSessionManager:
         self.client: Optional[paramiko.SSHClient] = None
         self.channel: Optional[paramiko.Channel] = None
         
-        self.transcript_file = f"debug_terminal_{int(time.time())}.txt"
+        log_dir = Path(__file__).parent.parent / "logs" / "terminal"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        self.transcript_file = str(log_dir / f"debug_terminal_{int(time.time())}.txt")
+        
         with open(self.transcript_file, "w", encoding="utf-8") as f:
             f.write("=== LOG DE TERMINAL SSH (PANTALLA LIMPIA) ===\n")
 
@@ -73,7 +78,20 @@ class SSHSessionManager:
         if self.client: self.client.close()
         self.trazador.registrar_posicion("Conexión SSH cerrada.")
 
-    def read_until(self, expected_prompts: list, timeout: int = 15) -> str:
+    def resolver_bloqueo_ia(self, screen: str) -> str:
+        """Self-Healing: Consulta a la IA qué hacer ante un error o bloqueo del ERP legacy."""
+        try:
+            from core.utils import _groq_completar
+            prompt = f"El ERP legacy por consola mostró esta pantalla:\n{screen[-1000:]}\n\n¿Qué tecla debe presionar el robot para volver atrás o confirmar el error y destrabarse? Responde UNA SOLA PALABRA de estas: ESC, ENTER, END, NADA."
+            respuesta = _groq_completar(prompt).strip().upper()
+            self.trazador.registrar_posicion(f"🤖 IA Self-Healing evaluó la pantalla. Decisión: {respuesta}")
+            return respuesta
+        except Exception as e:
+            self._log_terminal("SELF_HEALING_ERR", str(e))
+            return "ESC"
+
+    def read_until(self, expected_prompts: list, timeout: int = 15, auto_heal: bool = True) -> str:
+        """Lee del canal hasta encontrar uno de los prompts esperados."""
         screen = ""
         start_time = time.time()
         while time.time() - start_time < timeout:
@@ -83,15 +101,29 @@ class SSHSessionManager:
                 screen_limpia = _limpiar_ansi(screen)
                 for prompt in expected_prompts:
                     if prompt.lower() in screen_limpia.lower():
-                        self.trazador.registrar_posicion(f"Prompt encontrado: '{prompt}'")
                         self._log_terminal("RECIBE", screen_limpia)
                         return screen_limpia
             time.sleep(0.1)
         self._log_terminal("TIMEOUT_RECIBE", _limpiar_ansi(screen))
-        raise TimeoutError(f"Timeout esperando por prompts: {expected_prompts}. Última pantalla:\n{_limpiar_ansi(screen)[-500:]}")
+        if auto_heal:
+            self.trazador.registrar_posicion("⏳ Timeout detectado. Iniciando rutina Self-Healing...")
+            accion = self.resolver_bloqueo_ia(_limpiar_ansi(screen))
+            if "ESC" in accion:
+                self.send('\x1b') # ESC
+            elif "ENTER" in accion:
+                self.send_enter()
+            time.sleep(1.5)
+            # Reintentar lectura tras intentar destrabar
+            return self.read_until(expected_prompts, timeout=5, auto_heal=False)
+        else:
+            raise TimeoutError(f"Timeout esperando por prompts: {expected_prompts}. Última pantalla:\n{_limpiar_ansi(screen)[-500:]}")
 
     def send(self, command: str, interval: float = 0.04):
-        self.trazador.registrar_posicion(f"Enviando comando: {repr(command)}")
+        """Envía un comando al canal simulando tipeo humano para no atragantar el sistema legacy."""
+        # Sincronización Estricta (Anti-lock): Limpieza predictiva del buffer antes de interactuar
+        if self.channel and self.channel.recv_ready():
+            self.channel.recv(32768)
+            
         self._log_terminal("ENVIA", repr(command))
         for char in command:
             self.channel.send(char)
@@ -169,7 +201,9 @@ def ejecutar_stock_paramiko(df, log_func, progress_func, archivo_origen):
             es_gramaje = dato_d.lower() not in ['nan', '', 'none']
             if not sku or sku.lower() in ("none", "nan", ""): continue
 
-            with trazador.etapa("CARGA_ITEM", f"SKU {sku}", fila=i + 1, sku=sku):
+            desc_m = obtener_descripcion_maestra(sku)
+            titulo_log = f"SKU {sku} — {desc_m[:25]} (+{cantidad} un.)" if desc_m else f"SKU {sku} (+{cantidad} un.)"
+            with trazador.etapa("CARGA_ITEM", titulo_log, fila=i + 1, sku=sku):
                 ssh.send(str(sku))
                 for _ in range(4):
                     ssh.send_enter(); time.sleep(0.1)
@@ -203,4 +237,10 @@ def ejecutar_stock_paramiko(df, log_func, progress_func, archivo_origen):
     finally:
         if ssh: ssh.disconnect()
         if archivo_origen:
-            archivar_procesado(archivo_origen, "STOCK_PARAMIKO", len(df), False, log_func)
+            archivar_procesado(
+                ruta_archivo=archivo_origen,
+                robot_nombre="STOCK_PARAMIKO",
+                filas_procesadas=len(df),
+                dry_run=False,
+                log_func=log_func
+            )

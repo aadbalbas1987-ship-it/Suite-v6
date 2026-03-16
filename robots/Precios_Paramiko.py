@@ -13,6 +13,7 @@ Características:
 import time
 import re
 from typing import Optional, Callable
+from pathlib import Path
 
 try:
     import paramiko
@@ -23,7 +24,7 @@ except ImportError:
 from config import get_ssh_config
 from core.trazabilidad import Trazador, Estado
 from core.pre_validador import _limpiar_sku, _to_float
-from core.utils import f_monto
+from core.utils import f_monto, obtener_descripcion_maestra
 from core.file_manager import archivar_procesado
 
 
@@ -68,7 +69,9 @@ class SSHSessionManager:
         self.channel: Optional[paramiko.Channel] = None
         
         # -- Creador del Archivo Transcript (Caja Negra) --
-        self.transcript_file = f"debug_terminal_{int(time.time())}.txt"
+        log_dir = Path(__file__).parent.parent / "logs" / "terminal"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        self.transcript_file = str(log_dir / f"debug_terminal_{int(time.time())}.txt")
         with open(self.transcript_file, "w", encoding="utf-8") as f:
             f.write("=== LOG DE TERMINAL SSH (PANTALLA LIMPIA) ===\n")
 
@@ -105,7 +108,19 @@ class SSHSessionManager:
             self.client.close()
         self.trazador.registrar_posicion("Conexión SSH cerrada.")
 
-    def read_until(self, expected_prompts: list, timeout: int = 15) -> str:
+    def resolver_bloqueo_ia(self, screen: str) -> str:
+        """Self-Healing: Consulta a la IA qué hacer ante un error o bloqueo del ERP legacy."""
+        try:
+            from core.utils import _groq_completar
+            prompt = f"El ERP legacy por consola mostró esta pantalla:\n{screen[-1000:]}\n\n¿Qué tecla debe presionar el robot para volver atrás o confirmar el error y destrabarse? Responde UNA SOLA PALABRA de estas: ESC, ENTER, END, NADA."
+            respuesta = _groq_completar(prompt).strip().upper()
+            self.trazador.registrar_posicion(f"🤖 IA Self-Healing evaluó la pantalla. Decisión: {respuesta}")
+            return respuesta
+        except Exception as e:
+            self._log_terminal("SELF_HEALING_ERR", str(e))
+            return "ESC"
+
+    def read_until(self, expected_prompts: list, timeout: int = 15, auto_heal: bool = True) -> str:
         """Lee del canal hasta encontrar uno de los prompts esperados."""
         screen = ""
         start_time = time.time()
@@ -116,12 +131,22 @@ class SSHSessionManager:
                 screen_limpia = _limpiar_ansi(screen)
                 for prompt in expected_prompts:
                     if prompt.lower() in screen_limpia.lower():
-                        self.trazador.registrar_posicion(f"Prompt encontrado: '{prompt}'")
                         self._log_terminal("RECIBE", screen_limpia)
                         return screen_limpia
             time.sleep(0.1)
         self._log_terminal("TIMEOUT_RECIBE", _limpiar_ansi(screen))
-        raise TimeoutError(f"Timeout esperando por prompts: {expected_prompts}. Última pantalla:\n{_limpiar_ansi(screen)[-500:]}")
+        if auto_heal:
+            self.trazador.registrar_posicion("⏳ Timeout detectado. Iniciando rutina Self-Healing...")
+            accion = self.resolver_bloqueo_ia(_limpiar_ansi(screen))
+            if "ESC" in accion:
+                self.send_esc()
+            elif "ENTER" in accion:
+                self.send_enter()
+            time.sleep(1.5)
+            # Reintentar lectura tras intentar destrabar
+            return self.read_until(expected_prompts, timeout=5, auto_heal=False)
+        else:
+            raise TimeoutError(f"Timeout esperando por prompts: {expected_prompts}. Última pantalla:\n{_limpiar_ansi(screen)[-500:]}")
 
     def read_all(self, timeout: float = 1.5) -> str:
         """Lee todo el contenido actual del buffer (captura de pantalla SSH)."""
@@ -139,31 +164,30 @@ class SSHSessionManager:
 
     def send(self, command: str, interval: float = 0.04):
         """Envía un comando al canal simulando tipeo humano para no atragantar el sistema legacy."""
-        self.trazador.registrar_posicion(f"Enviando comando: {repr(command)}")
+        # Sincronización Estricta (Anti-lock/amontonamiento): Limpieza predictiva del buffer antes de interactuar
+        if self.channel and self.channel.recv_ready():
+            self.channel.recv(32768)
+            
         self._log_terminal("ENVIA", repr(command))
         for char in command:
             self.channel.send(char)
             time.sleep(interval)
 
     def send_enter(self):
-        self.trazador.registrar_posicion("Tecla: ENTER")
         self._log_terminal("TECLA", "ENTER")
         self.channel.send('\r')
 
     def send_f_key(self, key_num: int):
         f_keys = {1: '\x1bOP', 5: '\x1b[15~', 8: '\x1b[19~'} # F1, F5, F8
-        self.trazador.registrar_posicion(f"Tecla: F{key_num}")
         self._log_terminal("TECLA", f"F{key_num}")
         self.channel.send(f_keys.get(key_num, ''))
 
     def send_esc(self):
-        self.trazador.registrar_posicion("Tecla: ESC")
         self._log_terminal("TECLA", "ESC")
         self.channel.send('\x1b')
 
     def send_end(self):
         """Envía la tecla End (Fin) usando la secuencia ANSI de terminal."""
-        self.trazador.registrar_posicion("Tecla: END")
         self._log_terminal("TECLA", "END")
         self.channel.send('\x1b[4~')
 
@@ -192,20 +216,16 @@ def ejecutar_precios_paramiko(df, log_func, progress_func, archivo_origen):
                 ssh.send_enter()
                 time.sleep(0.4)
             pant_menu = ssh.read_until(["principal", "menu", "m e n u", "sistema"])
-            trazador.registrar_posicion(f"👀 Pantalla post-impresoras: {pant_menu[-100:].replace(chr(10), ' ❯ ')}")
 
         # 3. Navegación al módulo
         with trazador.etapa("NAVEGACION", "Navegando al módulo de precios (3 -> 4 -> 2)"):
             ssh.send('3'); p1 = ssh.read_until(["stock", "inventario", "sistema"])
-            trazador.registrar_posicion(f"👀 Menú 1: {p1[-80:].replace(chr(10), ' ❯ ')}")
             time.sleep(0.5) # Respiro al sistema
             
             ssh.send('4'); p2 = ssh.read_until(["precios", "lista", "actualizacion"])
-            trazador.registrar_posicion(f"👀 Menú 2: {p2[-80:].replace(chr(10), ' ❯ ')}")
             time.sleep(0.5) # Respiro al sistema
             
             ssh.send('2'); p3 = ssh.read_until(["artículo", "articulo", "código", "codigo", "sku"])
-            trazador.registrar_posicion(f"👀 Módulo Precios: {p3[-80:].replace(chr(10), ' ❯ ')}")
             time.sleep(1.5) # TIEMPO CLAVE: Esperar que el formulario pesado termine de dibujarse
 
         # 4. Bucle de carga de datos
@@ -214,13 +234,13 @@ def ejecutar_precios_paramiko(df, log_func, progress_func, archivo_origen):
 
         for i, row in df.iterrows():
             sku = _limpiar_sku(row.iloc[0])
-            costo = f_monto(row.iloc[1]).replace('.', ',')
-            p_salon = f_monto(row.iloc[2]).replace('.', ',')
-            p_may = f_monto(row.iloc[3]).replace('.', ',') if len(row) > 3 else ""
+            costo = f_monto(row.iloc[1])
+            p_salon = f_monto(row.iloc[2])
+            p_may = f_monto(row.iloc[3]) if len(row) > 3 else ""
             
             p_galpon_raw = str(row.iloc[4]).strip() if len(row) > 4 else ""
             tiene_galpon = p_galpon_raw.lower() not in ('0.00', '0', '', 'nan', 'none')
-            p_galpon = f_monto(row.iloc[4]).replace('.', ',') if tiene_galpon and len(row) > 4 else ""
+            p_galpon = f_monto(row.iloc[4]) if tiene_galpon and len(row) > 4 else ""
 
             if not sku or not p_salon:
                 log_func(f"⚠️ Fila {i+1} saltada: SKU o Precio Salón inválido.")
@@ -229,7 +249,9 @@ def ejecutar_precios_paramiko(df, log_func, progress_func, archivo_origen):
             es_hijo = sku in listado_hijos
             enters_ini = 6 if es_hijo else 5
 
-            with trazador.etapa("CARGA_ITEM", f"SKU {sku}", fila=i + 1, sku=sku):
+            desc_m = obtener_descripcion_maestra(sku)
+            titulo_log = f"SKU {sku} — {desc_m[:25]} (P.Salón: ${p_salon})" if desc_m else f"SKU {sku} (P.Salón: ${p_salon})"
+            with trazador.etapa("CARGA_ITEM", titulo_log, fila=i + 1, sku=sku):
 
                 # A. SKU + ENTERs de posicionamiento en Costo
                 ssh.send(str(sku))
@@ -275,7 +297,6 @@ def ejecutar_precios_paramiko(df, log_func, progress_func, archivo_origen):
                 if ssh.channel.recv_ready():
                     ssh.channel.recv(4096)
                     
-                trazador.registrar_posicion("Enviando F5 para guardar el artículo")
                 ssh.send_f_key(5)
                 time.sleep(1.5)
 

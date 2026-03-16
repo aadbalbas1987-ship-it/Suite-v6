@@ -59,6 +59,7 @@ except ImportError:
 from config import validar_entorno
 from core.etl_precios import procesar_lista_precios_mbf
 from core.normalizador_articulos import ejecutar_normalizador
+from core.ocr_remitos import extraer_datos_remito
 from core.utils import (
     forzar_caps_off,
     enfocar_putty,
@@ -106,6 +107,7 @@ class SuiteRPA(ctk.CTk):
         self._streamlit_proc_conciliacion = None
         self._streamlit_proc_normalizador = None
         self._streamlit_proc_cxc = None
+        self._streamlit_proc_auditoria = None
         self._norm_stop_event = None
         self._robot_corriendo = False  # para status bar
         self._scheduler = Scheduler()
@@ -115,14 +117,45 @@ class SuiteRPA(ctk.CTk):
         self.setup_ui()
         # Mostrar resumen de archivos disponibles en input/
         self.after(500, self._mostrar_resumen_input)
+        # Matar procesos fantasma de Streamlit
+        self.run_in_background(self._matar_procesos_huerfanos)
         # Arrancar polling del status bar
         self.after(1000, self._actualizar_status_bar)
+        
+        # Cargar descripciones maestras en background
+        def _bg_maestro():
+            from core.utils import cargar_maestro_descripciones
+            n = cargar_maestro_descripciones(BASE_DIR)
+            if n > 0:
+                self.log(f"📚 Maestro cargado: {n:,} descripciones listas en memoria.")
+        self.run_in_background(_bg_maestro)
 
     def _mostrar_resumen_input(self):
         resumen = InputManager.resumen_input(base_dir=BASE_DIR)
         self.log("─" * 50)
         self.log(resumen)
         self.log("─" * 50)
+        
+    def _matar_procesos_huerfanos(self):
+        """Busca y elimina procesos de Streamlit que quedaron vivos en puertos tras un cierre forzado."""
+        import subprocess
+        import re
+        puertos = ["8501", "8502", "8504", "8506", "8507", "8508"]
+        matados = 0
+        try:
+            cr = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+            out = subprocess.check_output(["netstat", "-ano"], text=True, creationflags=cr)
+            for line in out.splitlines():
+                if "LISTENING" in line and any(f":{p}" in line for p in puertos):
+                    pid = re.search(r'\d+$', line.strip())
+                    if pid and pid.group() != "0":
+                        subprocess.run(["taskkill", "/PID", pid.group(), "/F"], 
+                                       capture_output=True, creationflags=cr)
+                        matados += 1
+        except Exception:
+            pass
+        if matados > 0:
+            self.log(f"🧹 Se aniquilaron {matados} proceso(s) huérfano(s) liberando memoria.")
 
     def _validar_entorno_inicio(self):
         """Avisa si faltan variables de entorno críticas."""
@@ -225,13 +258,8 @@ class SuiteRPA(ctk.CTk):
         # ── Robots ──
         _sep("ROBOTS")
         _nav_btn("Robot UXB",              self.abrir_robot_uxb,       "◈")
-        _nav_btn("Alta Masiva Artículos",  self.abrir_robot_articulos, "+")
-        _mode_btn("Inventarios / Stock",   "STOCK",            "▸")
-        _mode_btn("Stock (Backdoor)",      "STOCK_PARAMIKO",   "⚡")
-        _mode_btn("Facturación",           "FACTURA",          "▸")
-        _mode_btn("Gestión de Precios",    "PRECIOS",          "▸")
-        _mode_btn("Precios (Backdoor)",    "PRECIOS_PARAMIKO", "⚡")
-        _mode_btn("Ajustes Basicos",     "AJUSTE",           "▸")
+        _mode_btn("Inventarios / Stock",   "STOCK_PARAMIKO",   "⚡")
+        _mode_btn("Gestión de Precios",    "PRECIOS_PARAMIKO", "⚡")
         _mode_btn("Ajustes (Backdoor)",  "AJUSTE_PARAMIKO",  "⚡")
         _mode_btn("Ajuste Analítico",      "AJUSTE_ANALITICO", "▸")
         _mode_btn("Cartera de Cheques",    "CHEQUES",          "▸")
@@ -240,6 +268,7 @@ class SuiteRPA(ctk.CTk):
         _sep("HERRAMIENTAS")
         _nav_btn("Descargar Lista Gral",  self.lanzar_descarga_ssh,  "↓")
         _nav_btn("ETL Lista de Precios",  self.lanzar_etl_precios,   "≡")
+        _nav_btn("OCR Remitos (IA)",      self.abrir_ocr_remitos,    "🧾")
 
         # Normalizar con botón stop integrado
         norm_row = ctk.CTkFrame(self.sidebar, fg_color="transparent", corner_radius=0)
@@ -278,10 +307,8 @@ class SuiteRPA(ctk.CTk):
 
         # ── Sistema ──
         _sep()
-        _nav_btn("Guardar en GitHub",     self.git_commit_push,   "↑")
         _nav_btn("🔐 Seguridad",          self.abrir_panel_seguridad, "🔐")
         _nav_btn("Modo Programado",       self.abrir_modo_programado, "⏰")
-        _nav_btn("Actualizar desde Git",  self.git_pull_update,   "↓")
         _nav_btn("Configuracion",         self.abrir_settings,    "⚙")
 
         # ══════════════════════════════════════════════════
@@ -316,30 +343,6 @@ class SuiteRPA(ctk.CTk):
             text_color="#94A3B8", font=ctk.CTkFont(size=12)
         )
         self.lbl_archivo.grid(row=0, column=1, sticky="w")
-
-        vel_frame = ctk.CTkFrame(tb_inner, fg_color="transparent")
-        vel_frame.grid(row=0, column=2, sticky="e")
-
-        self._vel_valor_label = ctk.CTkLabel(
-            vel_frame, text="x1.0",
-            font=ctk.CTkFont(size=11, weight="bold"),
-            text_color="#0057A8", width=36
-        )
-        self._vel_valor_label.pack(side="right", padx=(6, 0))
-
-        self._slider_vel = ctk.CTkSlider(
-            vel_frame, from_=0.3, to=2.0, number_of_steps=17,
-            variable=self.velocidad_var, width=160,
-            progress_color="#0057A8", button_color="#0057A8",
-            button_hover_color="#004A8F",
-            command=self._actualizar_label_velocidad,
-        )
-        self._slider_vel.pack(side="right")
-
-        ctk.CTkLabel(
-            vel_frame, text="Velocidad",
-            font=ctk.CTkFont(size=11), text_color="#64748B"
-        ).pack(side="right", padx=(0, 8))
 
         # ── Panel log ─────────────────────────────────────
         log_card = ctk.CTkFrame(
@@ -412,51 +415,57 @@ class SuiteRPA(ctk.CTk):
 
     def _actualizar_status_bar(self):
         """Polling cada 3s para actualizar el status bar."""
-        try:
-            from core.utils import enfocar_putty
-            import socket
-
-            # PuTTY
+        def _tarea_bg():
             try:
-                putty_ok = enfocar_putty(solo_verificar=True) if hasattr(enfocar_putty, '__call__') else False
-            except Exception:
-                putty_ok = False
+                from core.utils import enfocar_putty
+                import socket
 
-            # Streamlit (algún puerto activo)
-            stream_ok = False
-            for puerto in [8501, 8502, 8504]:
+                # PuTTY
                 try:
-                    with socket.create_connection(("localhost", puerto), timeout=0.3):
-                        stream_ok = True
-                        break
+                    putty_ok = enfocar_putty(solo_verificar=True) if hasattr(enfocar_putty, '__call__') else False
                 except Exception:
-                    pass
+                    putty_ok = False
 
-            # Archivos en input
-            todos = InputManager.listar_todos(base_dir=BASE_DIR)
-            total_archivos = sum(len(v) for v in todos.values())
+                # Streamlit (algún puerto activo)
+                stream_ok = False
+                for puerto in [8501, 8502, 8504]:
+                    try:
+                        with socket.create_connection(("localhost", puerto), timeout=0.3):
+                            stream_ok = True
+                            break
+                    except Exception:
+                        pass
 
-            # Actualizar labels
-            self._lbl_status_putty.configure(
-                text="⬤ PuTTY OK" if putty_ok else "⬤ PuTTY",
-                text_color="#22c55e" if putty_ok else "#ef4444"
-            )
-            self._lbl_status_stream.configure(
-                text="⬤ Dashboard ON" if stream_ok else "⬤ Dashboard OFF",
-                text_color="#22c55e" if stream_ok else "#64748B"
-            )
-            self._lbl_status_robot.configure(
-                text="⬤ Robot CORRIENDO" if self._robot_corriendo else "⬤ Robot inactivo",
-                text_color="#f59e0b" if self._robot_corriendo else "#64748B"
-            )
-            self._lbl_status_input.configure(
-                text=f"📂 input: {total_archivos} archivo(s)" if total_archivos else "📂 input: vacía",
-                text_color="#60a5fa" if total_archivos else "#64748B"
-            )
-        except Exception:
-            pass
-        finally:
-            self.after(3000, self._actualizar_status_bar)
+                # Archivos en input
+                todos = InputManager.listar_todos(base_dir=BASE_DIR)
+                total_archivos = sum(len(v) for v in todos.values())
+
+                # Actualizar GUI de forma segura en el main thread
+                def _update_ui():
+                    try:
+                        self._lbl_status_putty.configure(
+                            text="⬤ PuTTY OK" if putty_ok else "⬤ PuTTY",
+                            text_color="#22c55e" if putty_ok else "#ef4444"
+                        )
+                        self._lbl_status_stream.configure(
+                            text="⬤ Dashboard ON" if stream_ok else "⬤ Dashboard OFF",
+                            text_color="#22c55e" if stream_ok else "#64748B"
+                        )
+                        self._lbl_status_robot.configure(
+                            text="⬤ Robot CORRIENDO" if self._robot_corriendo else "⬤ Robot inactivo",
+                            text_color="#f59e0b" if self._robot_corriendo else "#64748B"
+                        )
+                        self._lbl_status_input.configure(
+                            text=f"📂 input: {total_archivos} archivo(s)" if total_archivos else "📂 input: vacía",
+                            text_color="#60a5fa" if total_archivos else "#64748B"
+                        )
+                    except Exception: pass
+                self.after(0, _update_ui)
+            except Exception: pass
+            finally:
+                self.after(3000, self._actualizar_status_bar)
+        
+        threading.Thread(target=_tarea_bg, daemon=True).start()
 
     def run_in_background(self, target, *args, **kwargs):
         """Lanza una tarea en un hilo seguro, capturando y logueando excepciones."""
@@ -539,7 +548,9 @@ class SuiteRPA(ctk.CTk):
 
     def exportar_debug_log(self):
         contenido = self.log_txt.get("1.0", "end")
-        ruta = str(BASE_DIR / f"debug_report_{time.strftime('%Y%m%d_%H%M%S')}.txt")
+        log_dir = BASE_DIR / "logs" / "reportes"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        ruta = str(log_dir / f"debug_report_{time.strftime('%Y%m%d_%H%M%S')}.txt")
         with open(ruta, "w", encoding="utf-8") as f:
             f.write(f"REPORTE RPA Suite v5 — {time.strftime('%Y-%m-%d %H:%M:%S')}\n\n{contenido}")
         os.startfile(ruta)
@@ -1080,6 +1091,127 @@ class SuiteRPA(ctk.CTk):
 
         self.run_in_background(tarea)
 
+    def abrir_ocr_remitos(self):
+        """Abre un panel para extraer datos de imágenes de remitos con IA Vision."""
+        popup = ctk.CTkToplevel(self)
+        popup.title("OCR de Remitos — IA Vision")
+        popup.geometry("680x600")
+        popup.resizable(False, False)
+        popup.grab_set()
+        popup.lift()
+        popup.focus_force()
+
+        ctk.CTkLabel(popup, text="🧾  OCR de Remitos (Gemini Vision)",
+                     font=ctk.CTkFont(size=15, weight="bold"), text_color="#1A1D23").pack(pady=(16, 4))
+        ctk.CTkLabel(popup, text="Extrae la tabla de productos desde fotos (JPG/PNG). Podés seleccionar varias.",
+                     font=ctk.CTkFont(size=11), text_color="#556B82").pack(pady=(0, 10))
+
+        form = ctk.CTkFrame(popup, fg_color="#F5F6F7", corner_radius=10)
+        form.pack(fill="x", padx=20, pady=(0, 10))
+
+        ruta_var = ctk.StringVar()
+        rutas_seleccionadas = []
+
+        r_file = ctk.CTkFrame(form, fg_color="transparent")
+        r_file.pack(fill="x", padx=14, pady=10)
+        ctk.CTkLabel(r_file, text="Imágenes a procesar:", width=130, anchor="w",
+                     font=ctk.CTkFont(size=11), text_color="#374151").pack(side="left")
+        ctk.CTkEntry(r_file, textvariable=ruta_var, width=320,
+                     fg_color="#FFFFFF", border_color="#D1D5DB").pack(side="left", padx=(0, 6))
+
+        def _browse():
+            ps = filedialog.askopenfilenames(
+                title="Seleccionar imágenes de remito",
+                filetypes=[("Imágenes", "*.jpg *.jpeg *.png"), ("Todos los archivos", "*.*")]
+            )
+            if ps:
+                rutas_seleccionadas.clear()
+                rutas_seleccionadas.extend(ps)
+                ruta_var.set(f"{len(ps)} archivo(s) seleccionado(s)")
+
+        ctk.CTkButton(r_file, text="Buscar", width=60, height=28,
+                      fg_color="#E2E8F0", hover_color="#CBD5E1", text_color="#374151",
+                      command=_browse).pack(side="left")
+
+        log_box = ctk.CTkTextbox(popup, height=100, fg_color="#1A1D23", text_color="#A3E635", font=("Consolas", 10))
+        log_box.pack(fill="x", padx=20, pady=(0, 10))
+
+        def _log(m):
+            log_box.insert("end", m + "\n")
+            log_box.see("end")
+            popup.update_idletasks()
+
+        res_frame = ctk.CTkFrame(popup, fg_color="#FFFFFF", border_width=1, border_color="#E2E8F0")
+        res_frame.pack(fill="both", expand=True, padx=20, pady=(0, 10))
+        
+        res_tb = ctk.CTkTextbox(res_frame, font=("Consolas", 10), fg_color="#F8FAFC", text_color="#1E293B", wrap="none")
+        res_tb.pack(fill="both", expand=True, padx=2, pady=2)
+        res_tb.insert("1.0", "Los resultados de la extracción aparecerán aquí...")
+        res_tb.configure(state="disabled")
+
+        btn_row = ctk.CTkFrame(popup, fg_color="transparent")
+        btn_row.pack(pady=(0, 15))
+
+        excel_paths = []
+
+        def _abrir_excel():
+            if excel_paths and Path(excel_paths[0]).parent.exists():
+                # Abre la carpeta donde se guardaron los archivos
+                os.startfile(Path(excel_paths[0]).parent)
+
+        def _procesar():
+            if not rutas_seleccionadas:
+                _log("❌ Seleccioná al menos una imagen válida primero.")
+                return
+
+            btn_proc.configure(state="disabled", text="Analizando IA...")
+            btn_abrir_xl.configure(state="disabled")
+            log_box.delete("1.0", "end")
+            res_tb.configure(state="normal")
+            res_tb.delete("1.0", "end")
+            res_tb.configure(state="disabled")
+
+            def _tarea():
+                try:
+                    excel_paths.clear()
+                    todas_tablas = []
+                    for ruta in rutas_seleccionadas:
+                        if not Path(ruta).exists(): continue
+                        
+                        _log(f"\n➡️ Procesando: {Path(ruta).name}")
+                        df = extraer_datos_remito(ruta, _log)
+                        if not df.empty:
+                            dest_dir = Path(BASE_DIR) / "procesados" / "OCR"
+                            dest_dir.mkdir(parents=True, exist_ok=True)
+                            xl_path = dest_dir / f"OCR_REMITO_{Path(ruta).stem}.xlsx"
+                            df.to_excel(xl_path, index=False)
+                            _log(f"💾 Exportado a: {xl_path.name}")
+                            excel_paths.append(str(xl_path))
+                            todas_tablas.append(f"--- {Path(ruta).name} ---\n{df.to_string(index=False)}\n\n")
+                    
+                    if todas_tablas:
+                        res_tb.configure(state="normal")
+                        res_tb.insert("1.0", "".join(todas_tablas))
+                        res_tb.configure(state="disabled")
+                        popup.after(0, lambda: btn_abrir_xl.configure(state="normal"))
+                except Exception as e:
+                    _log(f"❌ Error en la GUI: {e}")
+                finally:
+                    popup.after(0, lambda: btn_proc.configure(state="normal", text="▶ Extraer Tablas"))
+
+            self.run_in_background(_tarea)
+
+        btn_proc = ctk.CTkButton(btn_row, text="▶ Extraer Tablas", width=160, height=34,
+                                 fg_color="#0057A8", hover_color="#004A8F", command=_procesar)
+        btn_proc.pack(side="left", padx=6)
+        
+        btn_abrir_xl = ctk.CTkButton(btn_row, text="📂 Abrir Carpeta", width=130, height=34,
+                                     fg_color="#16A34A", hover_color="#15803D", 
+                                     command=_abrir_excel, state="disabled")
+        btn_abrir_xl.pack(side="left", padx=6)
+        ctk.CTkButton(btn_row, text="Cerrar", width=90, height=34,
+                      fg_color="#6B7280", hover_color="#4B5563", command=popup.destroy).pack(side="left", padx=6)
+
     def lanzar_normalizador(self):
         """
         Normaliza descripciones de artículos con Gemini IA.
@@ -1276,32 +1408,12 @@ class SuiteRPA(ctk.CTk):
             proc_attr="_streamlit_proc",
         )
 
-
     def detener_normalizador(self):
         """Señala al normalizador que debe detenerse al terminar el lote actual."""
         if self._norm_stop_event:
             self._norm_stop_event.set()
             self._btn_norm_stop.configure(state="disabled")
             self.log("⏹ Señal de stop enviada — el proceso terminará al finalizar el lote actual.")
-
-    def _actualizar_label_velocidad(self, val=None):
-        """Actualiza el label del slider y escribe la velocidad en config global."""
-        import config as _cfg
-        v = round(self.velocidad_var.get(), 1)
-        _cfg.ROBOT_SPEED = v
-
-        if v <= 0.5:
-            desc = "Muy seguro"
-        elif v <= 0.8:
-            desc = "Seguro"
-        elif v <= 1.2:
-            desc = "Normal"
-        elif v <= 1.6:
-            desc = "Rápido"
-        else:
-            desc = "Máximo"
-
-        self._vel_valor_label.configure(text=f"Velocidad: x{v:.1f} — {desc}")
 
 
     def abrir_descarga_datos(self):
@@ -1627,7 +1739,7 @@ class SuiteRPA(ctk.CTk):
         ctk.CTkLabel(popup, text="Ejecutar robots automáticamente a una hora fija.",
                      font=ctk.CTkFont(size=10), text_color="#9AA0AD").pack(pady=(0,10))
 
-        ROBOTS    = ["STOCK", "STOCK_PARAMIKO", "PRECIOS", "PRECIOS_PARAMIKO", "AJUSTE", "AJUSTE_PARAMIKO", "CHEQUES"]
+        ROBOTS    = ["STOCK_PARAMIKO", "PRECIOS_PARAMIKO", "AJUSTE", "AJUSTE_PARAMIKO", "CHEQUES"]
         DIAS_OPTS = ["lun","mar","mie","jue","vie","sab","dom"]
 
         form = ctk.CTkFrame(popup, fg_color="#F5F6F7", corner_radius=10)
@@ -1639,7 +1751,7 @@ class SuiteRPA(ctk.CTk):
                          font=ctk.CTkFont(size=11), text_color="#374151").pack(side="left")
             return r
 
-        robot_var = ctk.StringVar(value="STOCK")
+        robot_var = ctk.StringVar(value="STOCK_PARAMIKO")
         hora_var  = ctk.StringVar(value="08:00")
         dias_vars = {d: ctk.BooleanVar(value=(d in ["lun","mar","mie","jue","vie"])) for d in DIAS_OPTS}
 
@@ -2149,233 +2261,6 @@ class SuiteRPA(ctk.CTk):
 
         popup.bind("<Escape>", lambda e: popup.destroy())
 
-    def abrir_robot_articulos(self):
-        """
-        Popup robot de carga masiva de articulos via PuTTY.
-        Lee Excel, asigna categori con IA, carga en menu 3-3-2.
-        """
-        popup = ctk.CTkToplevel(self)
-        popup.title("Alta Masiva de Artículos")
-        popup.geometry("580x680")
-        popup.resizable(False, False)
-        popup.grab_set(); popup.lift(); popup.focus_force()
-
-        ctk.CTkLabel(popup, text="+ Alta Masiva de Artículos",
-                     font=ctk.CTkFont(size=14, weight="bold"),
-                     text_color="#1A1D23").pack(pady=(16, 2))
-        ctk.CTkLabel(popup,
-                     text="Lee el Excel, asigna categorias con IA y carga en PuTTY (menú 3-3-2).",
-                     font=ctk.CTkFont(size=10), text_color="#9AA0AD").pack(pady=(0, 8))
-
-        form = ctk.CTkFrame(popup, fg_color="#F5F6F7", corner_radius=10)
-        form.pack(fill="x", padx=20, pady=(0, 8))
-
-        def _row(label, pady=5):
-            r = ctk.CTkFrame(form, fg_color="transparent")
-            r.pack(fill="x", padx=14, pady=pady)
-            ctk.CTkLabel(r, text=label, width=150, anchor="w",
-                         font=ctk.CTkFont(size=11), text_color="#374151").pack(side="left")
-            return r
-
-        # Excel path
-        excel_var = ctk.StringVar(value="")
-        r_excel = _row("Excel de articulos:")
-        excel_entry = ctk.CTkEntry(r_excel, textvariable=excel_var, width=240,
-                                    fg_color="#FFFFFF", border_color="#D1D5DB")
-        excel_entry.pack(side="left", padx=(0, 6))
-
-        def _browse_excel():
-            from tkinter import filedialog
-            p = filedialog.askopenfilename(
-                title="Seleccionar Excel de articulos",
-                filetypes=[("Excel", "*.xlsx *.xls"), ("Todos", "*.*")]
-            )
-            if p:
-                excel_var.set(p)
-        ctk.CTkButton(r_excel, text="...", width=36, height=28,
-                      fg_color="#E2E8F0", hover_color="#CBD5E1",
-                      text_color="#374151",
-                      command=_browse_excel).pack(side="left")
-
-        # Encabezados
-        enc_var = ctk.BooleanVar(value=True)
-        r_enc = _row("Tiene encabezados:")
-        ctk.CTkSwitch(r_enc, text="Sí (saltar primera fila)",
-                      variable=enc_var, onvalue=True, offvalue=False).pack(side="left")
-
-        # Categori.txt
-        cat_var = ctk.StringVar(value=str(Path(BASE_DIR) / "Categori.txt"))
-        r_cat = _row("Categori.txt:")
-        cat_entry = ctk.CTkEntry(r_cat, textvariable=cat_var, width=240,
-                                  fg_color="#FFFFFF", border_color="#D1D5DB")
-        cat_entry.pack(side="left", padx=(0, 6))
-        def _browse_cat():
-            from tkinter import filedialog
-            p = filedialog.askopenfilename(
-                title="Seleccionar Categori.txt",
-                filetypes=[("Texto", "*.txt"), ("Todos", "*.*")]
-            )
-            if p: cat_var.set(p)
-        ctk.CTkButton(r_cat, text="...", width=36, height=28,
-                      fg_color="#E2E8F0", hover_color="#CBD5E1",
-                      text_color="#374151",
-                      command=_browse_cat).pack(side="left")
-
-        # Delay
-        delay_var = ctk.StringVar(value="0.4")
-        r_delay = _row("Delay (segundos):")
-        ctk.CTkEntry(r_delay, textvariable=delay_var, width=70,
-                     fg_color="#FFFFFF", border_color="#D1D5DB").pack(side="left")
-        ctk.CTkLabel(r_delay, text="  (0.3 rápido / 0.5 seguro)",
-                     font=ctk.CTkFont(size=9), text_color="#9CA3AF").pack(side="left")
-
-        # Desde / Limite
-        r_desde = _row("Empezar desde fila:")
-        desde_var = ctk.StringVar(value="1")
-        ctk.CTkEntry(r_desde, textvariable=desde_var, width=60,
-                     fg_color="#FFFFFF", border_color="#D1D5DB").pack(side="left")
-
-        r_lim = _row("Límite de artículos:")
-        lim_var = ctk.StringVar(value="")
-        ctk.CTkEntry(r_lim, textvariable=lim_var, width=60,
-                     fg_color="#FFFFFF", border_color="#D1D5DB").pack(side="left")
-        ctk.CTkLabel(r_lim, text="  (vacío = todos)",
-                     font=ctk.CTkFont(size=9), text_color="#9CA3AF").pack(side="left")
-
-        # Dry run
-        dry_var = ctk.BooleanVar(value=False)
-        r_dry = _row("Dry-run:")
-        ctk.CTkSwitch(r_dry, text="Simular sin tocar PuTTY",
-                      variable=dry_var, onvalue=True, offvalue=False).pack(side="left")
-
-        # Log
-        log_box = ctk.CTkTextbox(popup, height=200, fg_color="#1A1D23",
-                                  text_color="#A3E635", font=("Consolas", 10))
-        log_box.pack(fill="x", padx=20, pady=(0, 8))
-
-        def _log(m):
-            log_box.configure(state="normal")
-            log_box.insert("end", m + "\n")
-            log_box.see("end")
-            popup.update_idletasks()
-
-        # Aviso PuTTY
-        aviso = ctk.CTkLabel(popup,
-                              text="ANTES DE CARGAR: PuTTY debe estar abierto en menú 3-3-2",
-                              font=ctk.CTkFont(size=10, weight="bold"),
-                              text_color="#B45309")
-        aviso.pack(pady=(0, 4))
-
-        btn_row = ctk.CTkFrame(popup, fg_color="transparent")
-        btn_row.pack(pady=4)
-
-        def _previsualizar():
-            ruta = excel_var.get().strip()
-            if not ruta or not Path(ruta).exists():
-                _log("Seleccioná el Excel primero.")
-                return
-            btn_prev.configure(state="disabled", text="Analizando...")
-            log_box.delete("1.0", "end")
-
-            def _tarea():
-                try:
-                    from robots.robot_articulos import leer_excel_articulos, asignar_categoris
-                    arts = leer_excel_articulos(ruta, enc_var.get())
-                    _log(f"Excel: {len(arts)} articulo(s) encontrado(s)")
-                    arts = asignar_categoris(arts, cat_var.get().strip() or None, _log)
-                    _log("\nPREVISUALIZACION:")
-                    ok = sum(1 for a in arts if a["familia"])
-                    _log(f"  Con categoria asignada: {ok}/{len(arts)}")
-                    for a in arts[:10]:
-                        conf = "✅" if a["familia"] else "❌"
-                        _log(f"  {conf} {a['sku']} | {a['descripcion'][:30]} | "
-                             f"FAM={a['familia']} DPT={a['dpto']} "
-                             f"SEC={a['seccion']} GRP={a['grupo']}")
-                    if len(arts) > 10:
-                        _log(f"  ... y {len(arts)-10} más")
-                except Exception as e:
-                    _log(f"Error: {e}")
-                finally:
-                    popup.after(0, lambda: btn_prev.configure(
-                        state="normal", text="Vista previa"))
-
-            threading.Thread(target=_tarea, daemon=True).start()
-
-        def _iniciar():
-            ruta = excel_var.get().strip()
-            if not ruta or not Path(ruta).exists():
-                _log("Seleccioná el Excel primero.")
-                return
-            if not dry_var.get():
-                import tkinter.messagebox as mb
-                if not mb.askyesno(
-                    "Confirmar carga",
-                    "PuTTY debe estar abierto en menú 3-3-2.\n"
-                    "El robot comenzará en 5 segundos.\n\n"
-                    "¿Confirmar carga en PuTTY?"
-                ):
-                    return
-            btn_ok.configure(state="disabled", text="Cargando...")
-            log_box.delete("1.0", "end")
-
-            try:
-                delay = float(delay_var.get() or "0.4")
-            except ValueError:
-                delay = 0.4
-            try:
-                desde = int(desde_var.get() or "1")
-            except ValueError:
-                desde = 1
-            try:
-                limite = int(lim_var.get()) if lim_var.get().strip() else None
-            except ValueError:
-                limite = None
-
-            def _tarea():
-                try:
-                    if not dry_var.get():
-                        _log("Arrancando en 5 segundos — enfocá PuTTY ahora...")
-                        for i in range(5, 0, -1):
-                            _log(f"  {i}...")
-                            time.sleep(1)
-                    from robots.robot_articulos import ejecutar_carga_articulos
-                    res = ejecutar_carga_articulos(
-                        ruta_excel       = ruta,
-                        tiene_encabezados= enc_var.get(),
-                        ruta_categori    = cat_var.get().strip() or None,
-                        delay            = delay,
-                        dry_run          = dry_var.get(),
-                        start_desde      = desde,
-                        limite           = limite,
-                        log_func         = _log,
-                    )
-                    self.log(f"Alta articulos: {res['ok']} OK | "
-                             f"{res['errores']} errores | {res['saltados']} saltados")
-                except Exception as e:
-                    _log(f"Error: {e}")
-                    self.log(f"Error robot articulos: {e}")
-                finally:
-                    popup.after(0, lambda: btn_ok.configure(
-                        state="normal", text="Cargar en PuTTY"))
-
-            self.run_in_background(_tarea)
-
-        btn_prev = ctk.CTkButton(btn_row, text="Vista previa", width=130, height=34,
-                                  fg_color="#7C3AED", hover_color="#6D28D9",
-                                  command=_previsualizar)
-        btn_prev.pack(side="left", padx=6)
-
-        btn_ok = ctk.CTkButton(btn_row, text="Cargar en PuTTY", width=150, height=34,
-                                fg_color="#16A34A", hover_color="#15803D",
-                                command=_iniciar)
-        btn_ok.pack(side="left", padx=6)
-
-        ctk.CTkButton(btn_row, text="Cancelar", width=90, height=34,
-                      fg_color="#6B7280", hover_color="#4B5563",
-                      command=popup.destroy).pack(side="left", padx=6)
-
-        popup.bind("<Escape>", lambda e: popup.destroy())
-
     def abrir_compartir_dashboard(self):
         """
         Popup para compartir dashboards via:
@@ -2400,11 +2285,7 @@ class SuiteRPA(ctk.CTk):
                      font=ctk.CTkFont(size=10), text_color="#9AA0AD").pack(pady=(0, 8))
 
         dashboards = [
-            ("Business Intelligence",  8501),
-            ("Quiebres de Stock",       8502),
-            ("Pricing Intelligence",    8506),
-            ("Conciliacion Bancaria",   8507),
-            ("Normalizador Maestro",    8508),
+            ("Portal Unificado (Todos)", 8501),
         ]
         nombres = [d[0] for d in dashboards]
 
@@ -2870,7 +2751,7 @@ class SuiteRPA(ctk.CTk):
         cerrados = 0
         for attr in ["_streamlit_proc", "_streamlit_proc_quiebres", "_streamlit_proc_pricing",
                      "_streamlit_proc_pricing_intel", "_streamlit_proc_conciliacion",
-                     "_streamlit_proc_normalizador", "_streamlit_proc_cxc"]:
+                     "_streamlit_proc_normalizador", "_streamlit_proc_cxc", "_streamlit_proc_auditoria"]:
             proc = getattr(self, attr, None)
             if proc and proc.poll() is None:
                 try:
